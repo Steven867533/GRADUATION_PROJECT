@@ -1,0 +1,189 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include "MAX30105.h"
+#include "heartRate.h"
+
+MAX30105 particleSensor;
+
+// Timing variables
+unsigned long measurementStartTime = 0;
+const unsigned long MEASUREMENT_DURATION = 60000; // 1 minute in milliseconds
+bool measurementActive = false;
+bool measurementComplete = false;
+
+// Heart rate calculation variables
+const int MAX_BEATS = 120; // Maximum beats to store (for 2 beats per second over 60 seconds)
+unsigned long beatTimes[MAX_BEATS]; // Array to store timestamps of each beat
+int beatCount = 0;
+float calculatedBPM = 0;
+long lastBeat = 0;
+
+// Current reading variables
+long irValue = 0;
+int displayedBPM = 0;
+int displayedSpO2 = 0;
+
+
+void startMeasurement();
+void resetMeasurement();
+void finishMeasurement();
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Accurate Heart Rate Monitor");
+
+  // Initialize sensor
+  if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
+    Serial.println("MAX30102 was not found. Please check wiring/power.");
+    while (1);
+  }
+  
+  Serial.println("Sensor initialized! Place your finger on the sensor.");
+  Serial.println("Hold still for 1 minute for accurate readings.");
+
+  // Configure sensor with appropriate settings
+  particleSensor.setup(); 
+  particleSensor.setPulseAmplitudeRed(0x1F); // Set to higher power
+  particleSensor.setPulseAmplitudeIR(0x1F);  // Set to higher power
+  particleSensor.setPulseAmplitudeGreen(0);  // Turn off Green LED
+}
+
+void loop() {
+  // Read from sensor
+  irValue = particleSensor.getIR();
+  long redValue = particleSensor.getRed();
+
+  // Check if finger is placed on sensor
+  if (irValue < 50000) {
+    // No finger detected
+    resetMeasurement();
+    Serial.println("No finger detected. Place finger on sensor.");
+    delay(1000);
+    return;
+  }
+  
+  // Start measurement when finger is detected
+  if (!measurementActive && !measurementComplete) {
+    startMeasurement();
+  }
+  
+  // Process beats during measurement
+  if (measurementActive) {
+    // Check if measurement duration has elapsed
+    if (millis() - measurementStartTime >= MEASUREMENT_DURATION) {
+      finishMeasurement();
+    }
+    
+    // Detect beats and record timestamps
+    if (checkForBeat(irValue)) {
+      unsigned long currentTime = millis();
+      
+      // Calculate instantaneous BPM for display
+      if (lastBeat != 0) {
+        long delta = currentTime - lastBeat;
+        displayedBPM = 60000 / delta; // 60000 ms in a minute
+        
+        // Sanity check for the displayed BPM
+        if (displayedBPM < 40 || displayedBPM > 220) {
+          displayedBPM = 0; // Invalid reading
+        }
+      }
+      
+      lastBeat = currentTime;
+      
+      // Store beat time if within array limits
+      if (beatCount < MAX_BEATS) {
+        beatTimes[beatCount] = currentTime;
+        beatCount++;
+      }
+      
+      Serial.print("Beat detected! Current BPM: ");
+      Serial.println(displayedBPM);
+    }
+    
+    // Calculate SpO2 (simplified approximation)
+    if (irValue > 50000 && redValue > 50000) {
+      float ratio = (float)redValue / (float)irValue;
+      displayedSpO2 = 110 - 25 * ratio;
+      
+      // Clamp to reasonable range
+      if (displayedSpO2 > 100) displayedSpO2 = 100;
+      if (displayedSpO2 < 80) displayedSpO2 = 80;
+    }
+    
+    // Show progress during measurement
+    if (millis() % 2000 < 10) { // Update roughly every 2 seconds
+      unsigned long elapsedTime = millis() - measurementStartTime;
+      int progressPercent = (elapsedTime * 100) / MEASUREMENT_DURATION;
+      
+      Serial.print("Measurement progress: ");
+      Serial.print(progressPercent);
+      Serial.print("%, Current BPM: ");
+      Serial.print(displayedBPM);
+      Serial.print(", SpO2: ");
+      Serial.print(displayedSpO2);
+      Serial.println("%");
+    }
+  }
+  
+  // Display final results if measurement is complete
+  if (measurementComplete) {
+    Serial.println("\n--- FINAL MEASUREMENT RESULTS ---");
+    Serial.print("Heart Rate: ");
+    Serial.print(calculatedBPM);
+    Serial.print(" BPM (based on ");
+    Serial.print(beatCount);
+    Serial.println(" beats)");
+    
+    Serial.print("SpO2 Estimate: ");
+    Serial.print(displayedSpO2);
+    Serial.println("%");
+    
+    Serial.println("\nPlace finger on sensor to start a new measurement.");
+    Serial.println("------------------------------");
+    
+    // Wait before allowing a new measurement
+    delay(5000);
+    measurementComplete = false;
+  }
+  
+  delay(50); // Short delay between readings
+}
+
+void startMeasurement() {
+  Serial.println("\n--- STARTING NEW MEASUREMENT ---");
+  Serial.println("Hold your finger still for 1 minute");
+  
+  // Reset variables
+  beatCount = 0;
+  lastBeat = 0;
+  calculatedBPM = 0;
+  
+  // Set timing
+  measurementStartTime = millis();
+  measurementActive = true;
+  measurementComplete = false;
+}
+
+void finishMeasurement() {
+  measurementActive = false;
+  measurementComplete = true;
+  
+  // Calculate accurate BPM based on collected data
+  if (beatCount >= 2) {
+    // Calculate time elapsed between first and last beat
+    unsigned long totalMeasurementTime = beatTimes[beatCount - 1] - beatTimes[0];
+    
+    // Calculate BPM: (beats-1) / minutes
+    // We use (beatCount-1) because we're counting intervals between beats
+    float minutesElapsed = totalMeasurementTime / 60000.0;
+    calculatedBPM = (beatCount - 1) / minutesElapsed;
+  } else {
+    calculatedBPM = 0; // Not enough beats detected
+  }
+}
+
+void resetMeasurement() {
+  measurementActive = false;
+  measurementComplete = false;
+  beatCount = 0;
+}
