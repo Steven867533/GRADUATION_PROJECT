@@ -1,0 +1,1332 @@
+```bash
+
+hce-backend/
+├── middleware
+│   └── auth.js
+├── models
+│   ├── location.js
+│   ├── message.js
+│   ├── reading.js
+│   └── user.js
+├── package.json
+├── package-lock.json
+├── routes
+│   ├── auth.js
+│   ├── locations.js
+│   ├── messages.js
+│   ├── readings.js
+│   └── users.js
+├── scripts
+│   └── setup_locations.js
+├── server.js
+└── test
+    ├── esp_sensor_simulation.py
+    ├── setup_and_test_users.sh
+    └── test_backend.sh
+
+6 directories, 17 files
+```
+
+
+### File: middleware/auth.js
+```javascript
+
+const jwt = require('jsonwebtoken');
+
+const authMiddleware = (req, res, next) => {
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+
+  if (!token) {
+    return res.status(401).json({ message: 'No token, authorization denied' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // Add user data to request
+    next();
+  } catch (err) {
+    res.status(401).json({ message: 'Token is not valid' });
+  }
+};
+
+module.exports = authMiddleware;
+```
+
+
+### File: models/location.js
+```javascript
+
+const mongoose = require('mongoose');
+
+const locationSchema = new mongoose.Schema({
+name: { type: String, required: true },
+type: { type: String, required: true, enum: ['Pharmacy', 'Doctor'] },
+coordinates: {
+latitude: { type: Number, required: true },
+longitude: { type: Number, required: true },
+},
+address: { type: String },
+});
+
+module.exports = mongoose.model('Location', locationSchema);
+```
+
+
+### File: models/message.js
+```javascript
+
+const mongoose = require('mongoose');
+
+const messageSchema = new mongoose.Schema({
+    senderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+    },
+    recipientId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+    },
+    content: {
+        type: String,
+        required: true,
+    },
+    sentTime: {
+        type: Date,
+        default: Date.now,
+    },
+    receivedTime: {
+        type: Date,
+    },
+    seenTime: {
+        type: Date,
+    },
+});
+
+module.exports = mongoose.model('Message', messageSchema);
+```
+
+
+### File: models/reading.js
+```javascript
+
+const mongoose = require('mongoose');
+
+const readingSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
+  heartRate: {
+    type: Number,
+    required: true,
+  },
+  spo2: {
+    type: Number,
+    required: true,
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now,
+  },
+  location: {
+    latitude: { type: Number },
+    longitude: { type: Number },
+  },
+});
+
+module.exports = mongoose.model('Reading', readingSchema);
+```
+
+
+### File: models/user.js
+```javascript
+
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  password: {
+    type: String,
+    required: true,
+  },
+  phoneNumber: {
+    type: String,
+    required: true,
+    unique: true, // This creates an index automatically
+  },
+  birthdate: {
+    type: Date,
+    required: true,
+  },
+  role: {
+    type: String,
+    enum: ['Patient', 'Companion', 'Doctor'],
+    required: true,
+  },
+  patientId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: function() {
+      return this.role === 'Companion';
+    },
+  },
+  doctorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: function() {
+      return this.role === 'Patient';
+    },
+  },
+  bloodPressureType: {
+    type: String,
+    enum: ['High', 'Average', 'Low', 'N/A'],
+    default: 'N/A',
+    required: function() {
+      return this.role === 'Patient';
+    },
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+
+### File: package.json
+```plaintext
+
+{
+  "name": "hce-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "express-validator": "^7.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.13.2"
+  }
+}
+
+```
+
+
+### File: routes/auth.js
+```javascript
+
+const express = require('express');
+const router = express.Router();
+const {
+    body,
+    validationResult
+} = require('express-validator');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/user');
+
+// Signup endpoint
+router.post(
+    '/signup', [
+        body('name').notEmpty().withMessage('Name is required'),
+        body('email').isEmail().withMessage('Valid email is required'),
+        body('password').isLength({
+            min: 8
+        }).withMessage('Password must be at least 8 characters'),
+        body('phoneNumber').notEmpty().withMessage('Phone number is required'),
+        body('birthdate').isISO8601().withMessage('Valid birthdate is required'),
+        body('role').isIn(['Doctor', 'Patient', 'Companion']).withMessage('Invalid role'),
+        body('bloodPressureType')
+        .if(body('role').equals('Patient'))
+        .isIn(['Low', 'Average', 'High'])
+        .withMessage('Invalid blood pressure type'),
+        body('doctorId')
+        .if(body('role').equals('Patient'))
+        .notEmpty()
+        .withMessage('Doctor ID is required for patients')
+        .isMongoId()
+        .withMessage('Invalid doctor ID'),
+        body('patientId')
+        .if(body('role').equals('Companion'))
+        .notEmpty()
+        .withMessage('Patient ID is required for companions')
+        .isMongoId()
+        .withMessage('Invalid patient ID'),
+    ],
+    async(req, res) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                errors: errors.array()
+            });
+        }
+
+        const {
+            name,
+            email,
+            password,
+            phoneNumber,
+            birthdate,
+            role,
+            bloodPressureType,
+            doctorId,
+            patientId
+        } = req.body;
+
+        try {
+            let user = await User.findOne({
+                email
+            });
+            if (user) {
+                return res.status(400).json({
+                    message: 'User already exists'
+                });
+            }
+
+            user = new User({
+                name,
+                email,
+                password: await bcrypt.hash(password, 10),
+                phoneNumber,
+                birthdate,
+                role,
+                bloodPressureType: role === 'Patient' ? bloodPressureType : undefined,
+                doctorId: role === 'Patient' ? doctorId : undefined,
+                patientId: role === 'Companion' ? patientId : undefined,
+            });
+
+            await user.save();
+
+            const token = jwt.sign({
+                    userId: user._id,
+                    role: user.role
+                },
+                process.env.JWT_SECRET, {
+                    expiresIn: '1h'
+                }
+            );
+
+            res.status(201).json({
+                token,
+                userId: user._id.toString()
+            });
+        } catch (err) {
+            console.error('Signup error:', err);
+            res.status(500).json({
+                message: 'Server error'
+            });
+        }
+    }
+);
+
+// Login endpoint
+router.post(
+    '/login', [
+        body('email').isEmail().withMessage('Valid email is required'),
+        body('password').notEmpty().withMessage('Password is required'),
+    ],
+    async(req, res) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                errors: errors.array()
+            });
+        }
+
+        const {
+            email,
+            password
+        } = req.body;
+
+        try {
+            const user = await User.findOne({
+                email
+            });
+            if (!user) {
+                return res.status(400).json({
+                    message: 'Invalid credentials'
+                });
+            }
+
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (!isMatch) {
+                return res.status(400).json({
+                    message: 'Invalid credentials'
+                });
+            }
+
+            const token = jwt.sign({
+                    userId: user._id,
+                    role: user.role
+                },
+                process.env.JWT_SECRET, {
+                    expiresIn: '1h'
+                }
+            );
+
+            res.json({
+                token
+            });
+        } catch (err) {
+            console.error('Login error:', err);
+            res.status(500).json({
+                message: 'Server error'
+            });
+        }
+    }
+);
+
+module.exports = router;
+```
+
+
+### File: routes/locations.js
+```javascript
+
+const express = require('express');
+const router = express.Router();
+const Location = require('../models/location');
+
+// Haversine formula to calculate distance between two points (in kilometers)
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+const R = 6371; // Earth's radius in kilometers
+const dLat = (lat2 - lat1) * (Math.PI / 180);
+const dLon = (lon2 - lon1) * (Math.PI / 180);
+const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+Math.sin(dLon / 2) * Math.sin(dLon / 2);
+const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+return R * c;
+};
+
+// GET /locations/nearby - Fetch nearby pharmacies and doctors
+router.get('/nearby', async (req, res) => {
+const { latitude, longitude } = req.query;
+if (!latitude || !longitude) {
+return res.status(400).json({ message: 'Latitude and longitude are required' });
+}
+
+try {
+const userLat = parseFloat(latitude);
+const userLon = parseFloat(longitude);
+const locations = await Location.find();
+
+const nearbyLocations = locations.map(location => {
+const distance = calculateDistance(
+userLat,
+userLon,
+location.coordinates.latitude,
+location.coordinates.longitude
+);
+return {
+name: location.name,
+type: location.type,
+distance: distance.toFixed(1), // Round to 1 decimal place
+coordinates: location.coordinates,
+};
+});
+
+// Sort by distance
+nearbyLocations.sort((a, b) => a.distance - b.distance);
+
+res.json(nearbyLocations);
+} catch (error) {
+console.error('Error fetching nearby locations:', error);
+res.status(500).json({ message: 'Server error' });
+}
+});
+
+module.exports = router;
+```
+
+
+### File: routes/messages.js
+```javascript
+
+const express = require('express');
+const router = express.Router();
+const Message = require('../models/message');
+const authMiddleware = require('../middleware/auth');
+
+// Send a message
+router.post('/', authMiddleware, async (req, res) => {
+  const { recipientId, content } = req.body;
+  if (!recipientId || !content) {
+    return res.status(400).json({ message: 'Recipient ID and content are required' });
+  }
+
+  try {
+    const message = new Message({
+      senderId: req.user.userId,
+      recipientId,
+      content,
+    });
+    await message.save();
+    res.status(201).json({ message: 'Message sent' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.get('/unseen-count', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const unseenCount = await Message.countDocuments({
+      recipientId: userId,
+      seenTime: null,
+    });
+    res.status(200).json({ unseenCount });
+  } catch (error) {
+    console.error('Error fetching unseen message count:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+
+### File: routes/readings.js
+```javascript
+
+const express = require('express');
+const router = express.Router();
+const Reading = require('../models/reading');
+const authMiddleware = require('../middleware/auth');
+
+// Save a new reading
+router.post('/', authMiddleware, async (req, res) => {
+  try {
+    const { heartRate, spo2, latitude, longitude } = req.body;
+    const reading = new Reading({
+      userId: req.user.userId,
+      heartRate,
+      spo2,
+      location: { latitude, longitude },
+    });
+    await reading.save();
+    res.status(201).json(reading);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Fetch readings for a user by date range
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const readings = await Reading.find({
+      userId: req.user.userId,
+      timestamp: {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      },
+    }).sort({ timestamp: 1 });
+    res.status(200).json(readings);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Fetch distinct dates with readings for a user
+router.get('/dates', authMiddleware, async (req, res) => {
+  try {
+    const readings = await Reading.find({ userId: req.user.userId });
+    const dates = [...new Set(readings.map(reading => 
+      reading.timestamp.toISOString().split('T')[0]
+    ))];
+    res.status(200).json(dates);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+
+### File: routes/users.js
+```javascript
+
+const express = require('express');
+const router = express.Router();
+const jwt = require('jsonwebtoken');
+const User = require('../models/user');
+const authMiddleware = require('../middleware/auth');
+
+
+// GET /users/me - Fetch the authenticated user's profile
+router.get('/me', authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId).select('-password');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// GET /users/by-phone - Fetch a user by phone number
+router.get('/by-phone', authMiddleware, async (req, res) => {
+const { phoneNumber } = req.query;
+    if (!phoneNumber) {
+    return res.status(400).json({ message: 'Phone number is required' });
+    }
+
+    try {
+        const user = await User.findOne({ phoneNumber }).select('-password');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error('Error fetching user by phone:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+router.get('/search', authMiddleware, async (req, res) => {
+    try {
+        const { phoneNumber } = req.query;
+        const users = await User.find({ 
+            phoneNumber: new RegExp(phoneNumber, 'i'),
+            _id: { $ne: req.user.userId } // Exclude the current user
+        }).select('name phoneNumber');
+        res.status(200).json(users);
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+module.exports = router;
+```
+
+
+### File: scripts/setup_locations.js
+```javascript
+
+require('dotenv').config();
+const mongoose = require('mongoose');
+const Location = require('../models/location');
+
+// Validate environment variable
+if (!process.env.MONGODB_URI) {
+console.error('Error: MONGODB_URI is not defined in .env');
+process.exit(1);
+}
+
+// Dummy locations around Cairo (lat: 30.033333, lon: 31.233334)
+const locations = [
+{
+name: 'Cairo Pharmacy A',
+type: 'Pharmacy',
+coordinates: { latitude: 30.033333, longitude: 31.233334 },
+address: '123 Nile St, Cairo',
+},
+{
+name: 'Dr. Ahmed Clinic',
+type: 'Doctor',
+coordinates: { latitude: 30.034500, longitude: 31.234500 },
+address: '456 Health Ave, Cairo',
+},
+{
+name: 'Cairo Pharmacy B',
+type: 'Pharmacy',
+coordinates: { latitude: 30.032000, longitude: 31.232000 },
+address: '789 Wellness Rd, Cairo',
+},
+{
+name: 'Dr. Fatima Office',
+type: 'Doctor',
+coordinates: { latitude: 30.035000, longitude: 31.235000 },
+address: '321 Medical Blvd, Cairo',
+},
+];
+
+// Connect to MongoDB
+mongoose
+.connect(process.env.MONGODB_URI, {
+serverSelectionTimeoutMS: 5000,
+})
+.then(async () => {
+console.log('Connected to MongoDB');
+
+// Clear existing locations
+await Location.deleteMany({});
+console.log('Cleared existing locations');
+
+// Insert new locations
+await Location.insertMany(locations);
+console.log('Dummy locations added successfully:', locations);
+
+// Close the connection
+await mongoose.connection.close();
+console.log('MongoDB connection closed');
+process.exit(0);
+})
+.catch((error) => {
+console.error('Error setting up locations:', error);
+mongoose.connection.close();
+process.exit(1);
+});
+```
+
+
+### File: server.js
+```javascript
+
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+
+const app = express();
+
+// Validate environment variables
+if (!process.env.MONGODB_URI) {
+  console.error('Error: MONGODB_URI is not defined in .env');
+  process.exit(1);
+}
+if (!process.env.JWT_SECRET) {
+  console.error('Error: JWT_SECRET is not defined in .env');
+  process.exit(1);
+}
+
+const debugMiddleware = (req, res, next) => {
+  const timestamp = new Date().toISOString();
+
+  console.log(`[${timestamp}] Request: ${req.method} ${req.url}`);
+  console.log(`[${timestamp}] Headers: ${JSON.stringify(req.headers, null, 2)}`); // Pretty print the headers
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log(`[${timestamp}] Request Payload: ${JSON.stringify(req.body)}`);
+  } else {
+    console.log(`[${timestamp}] Request Payload: None`);
+  }
+
+  const originalSend = res.send;
+
+  res.send = function (body) {
+    console.log(`[${timestamp}] Response Status: ${res.statusCode}`);
+    console.log(`[${timestamp}] Response Body: ${typeof body === 'string' ? body : JSON.stringify(body)}`);
+
+    return originalSend.call(this, body);
+  };
+
+  next();
+};
+
+
+app.use(cors({
+  origin: '*',
+}));
+
+app.use(express.json());
+app.use(debugMiddleware);
+
+// Add test route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    status: 'healthy',
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'UP',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// MongoDB connection with reconnection logic
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+})
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((err) => console.error('MongoDB connection error:', err));
+
+// Handle MongoDB connection events
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB disconnected. Attempting to reconnect...');
+});
+mongoose.connection.on('reconnected', () => {
+  console.log('MongoDB reconnected');
+});
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB error:', err);
+});
+
+// Mount routes
+app.use('/auth', require('./routes/auth'));
+app.use('/users', require('./routes/users'));
+app.use('/locations', require('./routes/locations'));
+app.use('/messages', require('./routes/messages'));
+app.use('/readings', require('./routes/readings'));
+
+// Global error-handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+process.on('SIGINT', async() => {
+  console.log('Shutting down server...');
+  await mongoose.connection.close();
+  console.log('MongoDB connection closed');
+  process.exit(0);
+});
+```
+
+
+### File: test/esp_sensor_simulation.py
+```python
+
+import numpy as np
+from flask import Flask, jsonify
+import time
+import threading
+import random
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for testing
+
+# Timing variables
+MEASUREMENT_DURATION = 30  # 30 seconds
+measurement_active = False
+measurement_complete = False
+measurement_start_time = 0
+
+# Beat detection variables
+MAX_BEATS = 120
+beat_times = [0] * MAX_BEATS
+beat_count = 0
+calculated_bpm = 0
+last_beat_system_time = None  # System time of the last beat (UTC)
+
+# Signal processing
+BUFFER_SIZE = 100
+ir_buffer = [0] * BUFFER_SIZE
+buffer_index = 0
+ir_dc = 0  # DC component (baseline)
+ir_ac_prev = 0  # Previous AC value
+rising_slope = False
+last_beat_time = 0
+MIN_BEAT_INTERVAL = 0.25  # 250ms (240 BPM max)
+
+# Display variables
+displayed_bpm = 0
+displayed_spo2 = 0
+
+# Simulated sensor state
+finger_detected = False
+simulated_time = 0
+
+# Lock for thread safety
+lock = threading.Lock()
+
+def reset_measurement():
+    global measurement_active, measurement_complete, beat_count, simulated_time, last_beat_system_time
+    with lock:
+        measurement_active = False
+        measurement_complete = False
+        beat_count = 0
+        simulated_time = 0
+        last_beat_system_time = None
+
+def start_measurement():
+    global measurement_active, measurement_complete, measurement_start_time
+    global beat_count, ir_ac_prev, rising_slope, simulated_time, last_beat_system_time
+    print("\n--- STARTING NEW MEASUREMENT ---")
+    print("Simulating measurement for 30 seconds")
+    with lock:
+        # Reset variables
+        beat_count = 0
+        calculated_bpm = 0
+        ir_ac_prev = 0
+        rising_slope = False
+        simulated_time = 0
+        last_beat_system_time = None
+
+        # Set timing
+        measurement_start_time = time.time()
+        measurement_active = True
+        measurement_complete = False
+
+def finish_measurement():
+    global measurement_active, measurement_complete, calculated_bpm
+    with lock:
+        measurement_active = False
+        measurement_complete = True
+
+        # Calculate accurate BPM based on collected data
+        if beat_count >= 2:
+            # Calculate time elapsed between first and last beat
+            total_measurement_time = beat_times[beat_count - 1] - beat_times[0]
+            # Calculate BPM: (beats-1) / minutes
+            minutes_elapsed = total_measurement_time / 60.0
+            calculated_bpm = (beat_count - 1) / minutes_elapsed
+        else:
+            calculated_bpm = 0  # Not enough beats detected
+
+def simulate_ir_red_values(t):
+    """
+    Simulate IR and red values using a sinusoidal wave to mimic heartbeat.
+    Frequency is set to ~1 Hz (60 BPM) with some variation.
+    """
+    # Simulate a heart rate between 60 and 100 BPM
+    bpm = random.uniform(60, 100)
+    freq = bpm / 60.0  # Hz
+    # IR signal: sinusoidal wave with DC offset and noise
+    ir_amplitude = 5000
+    ir_dc = 50000  # DC component
+    ir_noise = random.uniform(-1000, 1000)
+    ir_value = ir_dc + ir_amplitude * np.sin(2 * np.pi * freq * t) + ir_noise
+
+    # Red signal: slightly different amplitude for SpO2 calculation
+    red_amplitude = 4800
+    red_noise = random.uniform(-1000, 1000)
+    red_value = ir_dc + red_amplitude * np.sin(2 * np.pi * freq * t) + red_noise
+
+    return ir_value, red_value
+
+def process_measurement():
+    global buffer_index, ir_dc, ir_ac_prev, rising_slope, last_beat_time
+    global beat_count, displayed_bpm, displayed_spo2, simulated_time, last_beat_system_time
+
+    sample_rate = 100  # 100 samples per second
+    sample_interval = 1.0 / sample_rate
+
+    while measurement_active:
+        with lock:
+            current_time = simulated_time
+            # Simulate IR and red values
+            ir_value, red_value = simulate_ir_red_values(current_time)
+
+            # Check if finger is detected (simulated as always detected for now)
+            if ir_value < 30000:
+                reset_measurement()
+                print("No finger detected (simulated).")
+                return
+
+            # Update buffer
+            ir_buffer[buffer_index] = ir_value
+            buffer_index = (buffer_index + 1) % BUFFER_SIZE
+
+            # Calculate DC component (baseline) - moving average
+            ir_dc = sum(ir_buffer) / BUFFER_SIZE
+
+            # Extract AC component (pulsatile)
+            ir_ac = ir_value - ir_dc
+
+            # Beat detection using slope detection
+            valid_beat_timing = (current_time - last_beat_time) > MIN_BEAT_INTERVAL
+
+            # Rising slope detection
+            if ir_ac > ir_ac_prev and not rising_slope:
+                rising_slope = True
+            # Peak detection (transition from rising to falling)
+            elif ir_ac < ir_ac_prev and rising_slope and valid_beat_timing and ir_ac > 50:
+                rising_slope = False
+                last_beat_time = current_time
+
+                # Record beat
+                if beat_count < MAX_BEATS:
+                    beat_times[beat_count] = current_time
+                    beat_count += 1
+
+                    # Record system time of the beat
+                    last_beat_system_time = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+
+                    print("❤️ Beat detected!")
+                    print(f"Beat system time: {last_beat_system_time}")
+
+                    # Calculate instantaneous BPM if we have at least 2 beats
+                    if beat_count >= 2:
+                        delta = beat_times[beat_count-1] - beat_times[beat_count-2]
+                        displayed_bpm = 60.0 / delta
+
+                        # Sanity check
+                        if displayed_bpm < 40 or displayed_bpm > 220:
+                            displayed_bpm = 0  # Invalid reading
+                        else:
+                            print(f"Current BPM: {displayed_bpm:.1f}")
+
+            # Store current AC value for next comparison
+            ir_ac_prev = ir_ac
+
+            # Calculate SpO2 (simplified approximation)
+            if ir_value > 30000 and red_value > 30000:
+                ratio = red_value / ir_value
+                displayed_spo2 = 110 - 25 * ratio
+
+                # Clamp to reasonable range
+                if displayed_spo2 > 100:
+                    displayed_spo2 = 100
+                if displayed_spo2 < 80:
+                    displayed_spo2 = 80
+
+            # Show progress every 3 seconds
+            if int(current_time * 1000) % 3000 < 10:
+                elapsed_time = current_time - measurement_start_time
+                progress_percent = (elapsed_time * 100) / MEASUREMENT_DURATION
+                print(f"Progress: {progress_percent:.1f}%, Beats detected: {beat_count}, "
+                      f"Current BPM: {displayed_bpm:.1f}, SpO2: {displayed_spo2:.1f}")
+
+            # Check if measurement duration has elapsed
+            if current_time - measurement_start_time >= MEASUREMENT_DURATION:
+                finish_measurement()
+
+            simulated_time += sample_interval
+
+        # Simulate delay between samples
+        time.sleep(sample_interval)
+
+@app.route('/health')
+def health():
+    return jsonify({
+        "status": "UP",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+        "message": "ESP Sensor Simulator is running"
+    })
+
+@app.route('/readings')
+def get_readings():
+    global measurement_active, measurement_complete
+
+    # Check if a measurement is already in progress
+    if measurement_active:
+        return jsonify({
+            "status": "error",
+            "message": "Measurement in progress. Please wait."
+        }), 400
+
+    # Reset and start a new measurement
+    reset_measurement()
+    start_measurement()
+
+    # Run measurement in a separate thread
+    threading.Thread(target=process_measurement, daemon=True).start()
+
+    # Wait for measurement to complete
+    while not measurement_complete:
+        time.sleep(0.1)
+
+    # Return the results
+    return jsonify({
+        "status": "success",
+        "heartRate": round(calculated_bpm, 1),
+        "spo2": round(displayed_spo2, 1),
+        "beatsDetected": beat_count,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    })
+
+@app.route('/beat')
+def get_beat():
+    with lock:
+        return jsonify({
+            "lastBeatTime": last_beat_system_time,
+            "measurementActive": measurement_active,
+            "beatsDetected": beat_count
+        })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5001)
+```
+
+
+### File: test/setup_and_test_users.sh
+```bash
+
+#!/bin/bash
+
+# Define API base URL
+API_BASE_URL="http://localhost:5000"
+
+# Dummy data for patient
+PATIENT_NAME="John Doe"
+PATIENT_EMAIL="john.doe@example.com"
+PATIENT_PASSWORD="SecurePass123!"
+PATIENT_PHONE="+1234567890"
+PATIENT_BIRTHDATE="1950-01-01"
+PATIENT_ROLE="Patient"
+PATIENT_BP_TYPE="High"
+
+# Dummy data for companion
+COMPANION_NAME="Jane Smith"
+COMPANION_EMAIL="jane.smith@example.com"
+COMPANION_PASSWORD="SecurePass456!"
+COMPANION_PHONE="+0987654321"
+COMPANION_BIRTHDATE="1980-05-15"
+COMPANION_ROLE="Companion"
+
+# Step 1: Add a dummy patient
+echo "Adding dummy patient..."
+PATIENT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"$PATIENT_NAME\", \"email\":\"$PATIENT_EMAIL\", \"password\":\"$PATIENT_PASSWORD\", \"phoneNumber\":\"$PATIENT_PHONE\", \"birthdate\":\"$PATIENT_BIRTHDATE\", \"role\":\"$PATIENT_ROLE\", \"bloodPressureType\":\"$PATIENT_BP_TYPE\"}" \
+  "$API_BASE_URL/auth/signup")
+
+# Extract HTTP status code and response body
+PATIENT_HTTP_CODE=$(echo "$PATIENT_RESPONSE" | tail -n1)
+PATIENT_BODY=$(echo "$PATIENT_RESPONSE" | sed -e '$d')
+
+# Check if patient signup was successful (HTTP 201 and token present)
+if [ "$PATIENT_HTTP_CODE" -eq 201 ] && echo "$PATIENT_BODY" | grep -q '"token":"'; then
+  PATIENT_TOKEN=$(echo "$PATIENT_BODY" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+  echo "Patient added successfully: $PATIENT_NAME ($PATIENT_EMAIL)"
+  echo "Patient signup token: $PATIENT_TOKEN"
+else
+  echo "Failed to add patient: $PATIENT_BODY"
+  exit 1
+fi
+
+# Step 2: Add a companion linked to the patient
+echo "Adding dummy companion..."
+COMPANION_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"$COMPANION_NAME\", \"email\":\"$COMPANION_EMAIL\", \"password\":\"$COMPANION_PASSWORD\", \"phoneNumber\":\"$COMPANION_PHONE\", \"birthdate\":\"$COMPANION_BIRTHDATE\", \"role\":\"$COMPANION_ROLE\", \"patientPhoneNumber\":\"$PATIENT_PHONE\"}" \
+  "$API_BASE_URL/auth/signup")
+
+# Extract HTTP status code and response body
+COMPANION_HTTP_CODE=$(echo "$COMPANION_RESPONSE" | tail -n1)
+COMPANION_BODY=$(echo "$COMPANION_RESPONSE" | sed -e '$d')
+
+# Check if companion signup was successful (HTTP 201 and token present)
+if [ "$COMPANION_HTTP_CODE" -eq 201 ] && echo "$COMPANION_BODY" | grep -q '"token":"'; then
+  COMPANION_TOKEN=$(echo "$COMPANION_BODY" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+  echo "Companion added successfully: $COMPANION_NAME ($COMPANION_EMAIL), linked to patient phone $PATIENT_PHONE"
+  echo "Companion signup token: $COMPANION_TOKEN"
+else
+  echo "Failed to add companion: $COMPANION_BODY"
+  exit 1
+fi
+
+# Step 3: Test login for patient
+echo "Testing login for patient..."
+PATIENT_LOGIN_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"$PATIENT_EMAIL\", \"password\":\"$PATIENT_PASSWORD\"}" \
+  "$API_BASE_URL/auth/login")
+
+# Extract HTTP status code and response body
+PATIENT_LOGIN_HTTP_CODE=$(echo "$PATIENT_LOGIN_RESPONSE" | tail -n1)
+PATIENT_LOGIN_BODY=$(echo "$PATIENT_LOGIN_RESPONSE" | sed -e '$d')
+
+# Check if patient login was successful (HTTP 200 and token present)
+if [ "$PATIENT_LOGIN_HTTP_CODE" -eq 200 ] && echo "$PATIENT_LOGIN_BODY" | grep -q '"token":"'; then
+  PATIENT_LOGIN_TOKEN=$(echo "$PATIENT_LOGIN_BODY" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+  echo "Patient login successful! Token: $PATIENT_LOGIN_TOKEN"
+else
+  echo "Patient login failed: $PATIENT_LOGIN_BODY"
+  exit 1
+fi
+
+# Step 4: Test login for companion
+echo "Testing login for companion..."
+COMPANION_LOGIN_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"$COMPANION_EMAIL\", \"password\":\"$COMPANION_PASSWORD\"}" \
+  "$API_BASE_URL/auth/login")
+
+# Extract HTTP status code and response body
+COMPANION_LOGIN_HTTP_CODE=$(echo "$COMPANION_LOGIN_RESPONSE" | tail -n1)
+COMPANION_LOGIN_BODY=$(echo "$COMPANION_LOGIN_RESPONSE" | sed -e '$d')
+
+# Check if companion login was successful (HTTP 200 and token present)
+if [ "$COMPANION_LOGIN_HTTP_CODE" -eq 200 ] && echo "$COMPANION_LOGIN_BODY" | grep -q '"token":"'; then
+  COMPANION_LOGIN_TOKEN=$(echo "$COMPANION_LOGIN_BODY" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+  echo "Companion login successful! Token: $COMPANION_LOGIN_TOKEN"
+else
+  echo "Companion login failed: $COMPANION_LOGIN_BODY"
+  exit 1
+fi
+
+echo "All operations completed successfully!"
+```
+
+
+### File: test/test_backend.sh
+```bash
+
+#!/bin/bash
+
+# Configuration
+BACKEND_URL="http://localhost:5000"
+PORT=5000
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Function to log messages
+log() {
+  echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Function to check if a command was successful
+check_status() {
+  if [ $? -eq 0 ]; then
+    log "${GREEN}SUCCESS: $1${NC}"
+  else
+    log "${RED}FAILURE: $1${NC}"
+    cleanup
+    exit 1
+  fi
+}
+
+# Cleanup function to stop the server
+cleanup() {
+  log "Shutting down server..."
+  if [ ! -z "$SERVER_PID" ] && ps -p $SERVER_PID > /dev/null; then
+    kill $SERVER_PID
+    wait $SERVER_PID 2>/dev/null
+    log "Server stopped"
+  else
+    log "Server process $SERVER_PID already stopped"
+  fi
+}
+
+# Trap to ensure cleanup on script exit
+trap cleanup EXIT
+
+# Step 1: Start the backend server
+log "Starting backend server on port $PORT..."
+cd "$(dirname "$0")/.."
+# Export environment variables from .env
+if [ ! -f .env ]; then
+  log "${RED}ERROR: .env file not found${NC}"
+  exit 1
+fi
+set -a
+source .env
+set +a
+node server.js &
+SERVER_PID=$!
+sleep 5 # Wait for the server to start
+log "Server PID: $SERVER_PID"
+curl -s -o /dev/null -w "%{http_code}" $BACKEND_URL/health | grep -q 200
+check_status "Backend server started and healthy"
+
+# Step 2: Run the setup_locations.js script to populate locations
+log "Setting up dummy locations..."
+node scripts/setup_locations.js
+check_status "Locations setup completed"
+
+# Step 3: Create test users (Doctor, Patient, Companion)
+log "Creating test doctor..."
+DOCTOR_RESPONSE=$(curl -s -X POST $BACKEND_URL/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Dr. Ahmed","email":"doctor@example.com","password":"SecurePass123!","phoneNumber":"+20123456789","birthdate":"1970-03-20","role":"Doctor"}')
+echo "$DOCTOR_RESPONSE"
+DOCTOR_TOKEN=$(echo "$DOCTOR_RESPONSE" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+DOCTOR_ID=$(echo "$DOCTOR_RESPONSE" | grep -o '"userId":"[^"]*' | cut -d'"' -f4)
+log "Doctor Token: $DOCTOR_TOKEN"
+log "Doctor ID: $DOCTOR_ID"
+[ ! -z "$DOCTOR_TOKEN" ] && [ ! -z "$DOCTOR_ID" ]
+check_status "Doctor created successfully"
+
+log "Creating test patient..."
+PATIENT_RESPONSE=$(curl -s -X POST $BACKEND_URL/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Ali Hassan","email":"patient@example.com","password":"SecurePass123!","phoneNumber":"+20123456790","birthdate":"1990-01-01","role":"Patient","bloodPressureType":"Average","doctorId":"'"$DOCTOR_ID"'"}')
+echo "$PATIENT_RESPONSE"
+PATIENT_TOKEN=$(echo "$PATIENT_RESPONSE" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+PATIENT_ID=$(echo "$PATIENT_RESPONSE" | grep -o '"userId":"[^"]*' | cut -d'"' -f4)
+log "Patient Token: $PATIENT_TOKEN"
+log "Patient ID: $PATIENT_ID"
+[ ! -z "$PATIENT_TOKEN" ] && [ ! -z "$PATIENT_ID" ]
+check_status "Patient created successfully"
+
+log "Creating test companion..."
+COMPANION_RESPONSE=$(curl -s -X POST $BACKEND_URL/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Sara Ali","email":"companion@example.com","password":"SecurePass123!","phoneNumber":"+20123456791","birthdate":"1985-05-15","role":"Companion","patientId":"'"$PATIENT_ID"'"}')
+echo "$COMPANION_RESPONSE"
+COMPANION_TOKEN=$(echo "$COMPANION_RESPONSE" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+COMPANION_ID=$(echo "$COMPANION_RESPONSE" | grep -o '"userId":"[^"]*' | cut -d'"' -f4)
+log "Companion Token: $COMPANION_TOKEN"
+log "Companion ID: $COMPANION_ID"
+[ ! -z "$COMPANION_TOKEN" ] && [ ! -z "$COMPANION_ID" ]
+check_status "Companion created successfully"
+
+# Step 4: Log in as the patient
+log "Logging in as patient..."
+LOGIN_RESPONSE=$(curl -s -X POST $BACKEND_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"patient@example.com","password":"SecurePass123!"}')
+echo "$LOGIN_RESPONSE"
+TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+log "Login Token: $TOKEN"
+[ ! -z "$TOKEN" ]
+check_status "Patient login successful"
+
+# Step 5: Test fetching user profile
+log "Fetching patient profile..."
+PROFILE_RESPONSE=$(curl -s -X GET $BACKEND_URL/users/me \
+  -H "Authorization: Bearer $TOKEN")
+echo "$PROFILE_RESPONSE"
+echo "$PROFILE_RESPONSE" | grep -q '"email":"patient@example.com"'
+check_status "User profile fetched successfully"
+
+# Step 6: Test fetching nearby locations (using Cairo coordinates)
+log "Fetching nearby locations..."
+LOCATIONS_RESPONSE=$(curl -s -X GET "$BACKEND_URL/locations/nearby?latitude=30.033333&longitude=31.233334")
+echo "$LOCATIONS_RESPONSE"
+echo "$LOCATIONS_RESPONSE" | grep -q '"name":"Cairo Pharmacy A"'
+check_status "Nearby locations fetched successfully"
+
+# Step 7: Test sending a message to the doctor
+log "Sending a message to the doctor..."
+MESSAGE_RESPONSE=$(curl -s -X POST $BACKEND_URL/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"recipientId":"'"$DOCTOR_ID"'","content":"Test message from patient"}')
+echo "$MESSAGE_RESPONSE"
+echo "$MESSAGE_RESPONSE" | grep -q '"message":"Message sent"'
+check_status "Message sent successfully"
+
+# Step 8: Clean up
+log "All tests passed!"
+cleanup
+exit 0
+```
+

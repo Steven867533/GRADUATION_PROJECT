@@ -1,0 +1,4392 @@
+```bash
+
+lib/
+├── main.dart
+├── providers
+│   ├── api_service.dart
+│   ├── api_service.old.dart
+│   ├── auth_provider.dart
+│   └── auth_provider.old.dart
+└── screens
+    ├── device_manager_page.dart
+    ├── home_page.dart
+    ├── login_page.dart
+    ├── messages_page.dart
+    ├── profile_page.dart
+    ├── signup_page.dart
+    ├── user_selection_page.dart
+    └── view_analysis_page.dart
+
+3 directories, 13 files
+```
+
+
+### File: main.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'providers/auth_provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
+import 'screens/home_page.dart';
+import 'screens/login_page.dart';
+import 'screens/profile_page.dart';
+import 'screens/signup_page.dart';
+import 'screens/device_manager_page.dart';
+import 'screens/view_analysis_page.dart';
+import 'screens/messages_page.dart';
+import 'screens/user_selection_page.dart';
+import 'dart:io' show Platform;
+
+void main() {
+  // Initialize WebViewPlatform for platform-specific webviews
+  if (WebViewPlatform.instance == null) {
+    if (Platform.isAndroid) {
+      WebViewPlatform.instance = AndroidWebViewPlatform();
+    } else if (Platform.isIOS) {
+      WebViewPlatform.instance = WebKitWebViewPlatform();
+    }
+  }
+
+  // Run the app with Provider for state management
+  runApp(
+    ChangeNotifierProvider(
+      create: (context) => AuthProvider(),
+      child: const MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'HCE - Health Companion for Elderly',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: Colors.white,
+      ),
+      initialRoute: '/home',
+      routes: {
+        '/home': (context) => const HomePage(),
+        '/login': (context) => const LoginPage(),
+        '/signup': (context) => const SignUpPage(),
+        '/device_manager': (context) => const DeviceManagerPage(),
+        '/view_analysis': (context) => const ViewAnalysisPage(),
+        '/user_selection': (context) => const UserSelectionPage(),
+      },
+      onGenerateRoute: (settings) {
+        if (settings.name == '/profile') {
+          return MaterialPageRoute(
+            builder: (context) => const ProfilePage(),
+          );
+        }
+        if (settings.name == '/messages') {
+          final args = settings.arguments as Map<String, dynamic>?;
+          if (args == null) {
+            return MaterialPageRoute(
+              builder: (context) => const Scaffold(
+                body: Center(child: Text('Error: Missing message parameters')),
+              ),
+            );
+          }
+          final userId = args['userId'] as String;
+          final recipientId = args['recipientId'] as String;
+          final recipientName = args['recipientName'] as String;
+          return MaterialPageRoute(
+            builder: (context) => MessagesPage(
+              userId: userId,
+              recipientId: recipientId,
+              recipientName: recipientName,
+            ),
+          );
+        }
+        return null;
+      },
+    );
+  }
+}
+
+class AppConfig {
+  static const String baseUrl = 'http://10.0.2.2:5000';
+  static const String espUrl = 'http://10.0.2.2:5001';
+}
+
+```
+
+
+### File: providers/api_service.dart
+```dart
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../main.dart'; // For AppConfig
+
+class ApiService {
+  static const String baseUrl = AppConfig.baseUrl;
+  static const String espUrl = AppConfig.espUrl;
+  static final http.Client _client = http.Client();
+
+  Future<Map<String, dynamic>> getUserProfile(String token) async {
+    final url = '$baseUrl/users/me';
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to fetch user profile: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getCompanion(String token, String companionId) async {
+    final url = '$baseUrl/users/$companionId';
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to fetch companion: ${response.body}');
+    }
+  }
+
+  Future<List<dynamic>> getNearbyLocations(String token, double latitude, double longitude) async {
+    final url = '$baseUrl/locations/nearby?latitude=$latitude&longitude=$longitude';
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to fetch nearby locations: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getBeatData() async {
+    final url = '$espUrl/beat';
+    final response = await _client.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to fetch beat data');
+    }
+  }
+
+  Future<Map<String, dynamic>> startReading(String token, double latitude, double longitude) async {
+    final url = '$espUrl/readings';
+    final response = await _client.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      // Save the reading to the backend
+      final saveUrl = '$baseUrl/readings';
+      final saveResponse = await _client.post(
+        Uri.parse(saveUrl),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'heartRate': data['heartRate'],
+          'spo2': data['spo2'],
+          'latitude': latitude,
+          'longitude': longitude,
+        }),
+      );
+      if (saveResponse.statusCode != 201) {
+        throw Exception('Failed to save reading: ${saveResponse.body}');
+      }
+      return data;
+    } else {
+      throw Exception('Failed to start reading');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getReadings(String token, DateTime startDate, DateTime endDate) async {
+    final url = '$baseUrl/readings?startDate=${startDate.toIso8601String()}&endDate=${endDate.toIso8601String()}';
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to fetch readings: ${response.body}');
+    }
+  }
+
+  Future<List<String>> getReadingDates(String token) async {
+    final url = '$baseUrl/readings/dates';
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      return List<String>.from(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to fetch reading dates: ${response.body}');
+    }
+  }
+
+  Future<int> getUnseenMessageCount(String token) async {
+    final url = '$baseUrl/messages/unseen-count';
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['unseenCount'] ?? 0;
+    } else {
+      throw Exception('Failed to fetch unseen message count: ${response.body}');
+    }
+  }
+
+  Future<bool> checkEspHealth() async {
+    final url = '$espUrl/health';
+    try {
+      final response = await _client.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['status'] == 'UP';
+      }
+      return false;
+    } catch (e) {
+      print('Error checking ESP health: $e');
+      return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> searchUsers(String token, String phoneNumber) async {
+    final url = '$baseUrl/users/search?phoneNumber=$phoneNumber';
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to search users: ${response.body}');
+    }
+  }
+}
+```
+
+
+### File: providers/api_service.old.dart
+```dart
+
+import 'dart:convert';
+import 'package:HCE/main.dart';
+import 'package:http/http.dart' as http;
+
+class ApiService {
+  // static const String baseUrl = 'http://10.0.2.2:5000';
+  // static const String espUrl = 'http://10.0.2.2:5001';
+  static const String baseUrl = AppConfig.baseUrl;
+  static const String espUrl = AppConfig.espUrl;
+  
+  // Singleton HTTP client
+  static final http.Client _client = http.Client();
+
+  // Helper method to make authenticated GET requests
+  Future<Map<String, dynamic>> _authenticatedGet(
+      String endpoint, String token) async {
+    final url = Uri.parse('$baseUrl$endpoint');
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else if (response.statusCode == 401) {
+      throw Exception('Unauthorized: ${response.body}');
+    }
+    throw Exception('Failed to load data from $endpoint: ${response.body}');
+  }
+
+  Future<Map<String, dynamic>> getUserProfile(String token) async {
+    if (token.isEmpty) {
+      throw Exception('Token is empty');
+    }
+    return _authenticatedGet('/users/me', token);
+  }
+
+  Future<Map<String, dynamic>> getCompanion(
+      String token, String companionId) async {
+    if (token.isEmpty) {
+      throw Exception('Token is empty');
+    }
+    return _authenticatedGet('/users/$companionId', token);
+  }
+
+  Future<List<dynamic>> getNearbyLocations(
+      String token, double latitude, double longitude) async {
+    if (token.isEmpty) {
+      throw Exception('Token is empty');
+    }
+    final endpoint =
+        '/locations/nearby?latitude=$latitude&longitude=$longitude';
+    final url = Uri.parse('$baseUrl$endpoint');
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else if (response.statusCode == 401) {
+      throw Exception('Unauthorized: ${response.body}');
+    }
+    throw Exception('Failed to load nearby locations: ${response.body}');
+  }
+
+  Future<Map<String, dynamic>> getBeatData() async {
+    final url = Uri.parse('$espUrl/beat');
+    print('Making GET request to $url (no token required)');
+    final response = await _client.get(url);
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    }
+    throw Exception('Failed to fetch beat data: ${response.body}');
+  }
+
+  Future<Map<String, dynamic>> startReading() async {
+    final url = Uri.parse('$espUrl/readings');
+    print('Making GET request to $url (no token required)');
+    final response = await _client.get(url);
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    }
+    throw Exception('Failed to start reading: ${response.body}');
+  }
+
+  Future<int> getUnseenMessageCount(String token) async {
+    if (token.isEmpty) {
+      throw Exception('Token is empty');
+    }
+    final url = Uri.parse('$baseUrl/messages/unseen-count');
+    print('Making GET request to $url with token: $token');
+    final response = await _client.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['unseenCount'] ?? 0;
+    } else if (response.statusCode == 401) {
+      throw Exception('Unauthorized: ${response.body}');
+    }
+    throw Exception('Failed to fetch unseen message count: ${response.body}');
+  }
+}
+
+```
+
+
+### File: providers/auth_provider.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
+
+class AuthProvider with ChangeNotifier {
+  static const String _baseUrl = 'http://10.0.2.2:5000'; // Base URL for API
+  static const String _authUrl = '$_baseUrl/auth'; // URL for auth endpoints
+  static const String _tokenKey = 'token';
+  static const String _espIpKey = 'http://10.0.2.2:5001'; // Key for ESP IP
+
+  String? _token;
+  String? _userId;
+  String? _role;
+  Map<String, dynamic>? _userProfile;
+  String? _espIp; // Store ESP IP
+
+  // Getters
+  bool get isLoggedIn => _token != null && !JwtDecoder.isExpired(_token!);
+  String? get token => _token;
+  String? get userId => _userId;
+  String? get role => _role;
+  Map<String, dynamic>? get userProfile => _userProfile;
+  String? get espIp => _espIp;
+
+  AuthProvider() {
+    _loadToken();
+    _loadEspIp();
+  }
+
+  Future<void> _loadToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _token = prefs.getString(_tokenKey);
+
+      if (_token != null) {
+        if (JwtDecoder.isExpired(_token!)) {
+          await logout();
+          return;
+        }
+
+        final decodedToken = JwtDecoder.decode(_token!);
+        _userId = decodedToken['userId']?.toString();
+        _role = decodedToken['role']?.toString();
+        await fetchUserProfile();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading token: $e');
+      await logout();
+    }
+  }
+
+  // Load ESP IP
+  Future<void> _loadEspIp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _espIp = prefs.getString(_espIpKey);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error loading ESP IP: $e');
+    }
+  }
+
+  // Save ESP IP
+  Future<void> saveEspIp(String ip) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_espIpKey, ip);
+      _espIp = ip;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error saving ESP IP: $e');
+      throw Exception('Failed to save ESP IP');
+    }
+  }
+
+  // Clear ESP IP
+  Future<void> clearEspIp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_espIpKey);
+      _espIp = null;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error clearing ESP IP: $e');
+    }
+  }
+
+  // Fetch user profile
+  Future<void> fetchUserProfile() async {
+    if (_token == null) {
+      _userProfile = null;
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/users/me'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+          'Screen': 'auth_provider'
+        },
+      );
+
+      if (response.statusCode == 200) {
+        _userProfile = json.decode(response.body);
+        notifyListeners();
+      } else {
+        final data = json.decode(response.body);
+        debugPrint('Error fetching user profile: ${data['message']}');
+        _userProfile = null;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Network error fetching user profile: $e');
+      _userProfile = null;
+      notifyListeners();
+    }
+  }
+
+  // Save token
+  Future<void> _saveToken(String token) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_tokenKey, token);
+
+      _token = token;
+      final decodedToken = JwtDecoder.decode(token);
+      _userId = decodedToken['userId']?.toString();
+      _role = decodedToken['role']?.toString();
+      await fetchUserProfile();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error saving token: $e');
+      throw Exception('Failed to save credentials');
+    }
+  }
+
+  // Clear credentials
+  Future<void> logout() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_tokenKey);
+
+      _token = null;
+      _userId = null;
+      _role = null;
+      _userProfile = null;
+      await clearEspIp();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error during logout: $e');
+      throw Exception('Failed to logout');
+    }
+  }
+
+  // Handle API response
+  Future<Map<String, dynamic>> _handleAuthResponse(
+      http.Response response) async {
+    try {
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final token = data['token'];
+        if (token == null) {
+          return {'success': false, 'message': 'Token not found in response'};
+        }
+
+        await _saveToken(token);
+        return {'success': true};
+      } else {
+        return {
+          'success': false,
+          'message': data['message'] ?? 'Authentication failed'
+        };
+      }
+    } catch (e) {
+      debugPrint('Error handling auth response: $e');
+      return {'success': false, 'message': 'Failed to process response'};
+    }
+  }
+
+  // Sign up method
+  Future<Map<String, dynamic>> signUp({
+    required String name,
+    required String email,
+    required String password,
+    required String phoneNumber,
+    required String birthdate,
+    required String role,
+    String? bloodPressureType,
+    String? patientPhoneNumber,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_authUrl/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'name': name,
+          'email': email.trim(),
+          'password': password,
+          'phoneNumber': phoneNumber.trim(),
+          'birthdate': birthdate,
+          'role': role,
+          if (bloodPressureType != null) 'bloodPressureType': bloodPressureType,
+          if (patientPhoneNumber != null)
+            'patientPhoneNumber': patientPhoneNumber.trim(),
+        }),
+      );
+
+      return await _handleAuthResponse(response);
+    } catch (e) {
+      debugPrint('Error during signup: $e');
+      return {
+        'success': false,
+        'message': 'Network error occurred. Please try again.'
+      };
+    }
+  }
+
+  // Login method
+  Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_authUrl/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'email': email.trim(),
+          'password': password,
+        }),
+      );
+
+      return await _handleAuthResponse(response);
+    } catch (e) {
+      debugPrint('Error during login: $e');
+      return {
+        'success': false,
+        'message': 'Network error occurred. Please try again.'
+      };
+    }
+  }
+}
+```
+
+
+### File: providers/auth_provider.old.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
+
+class AuthProvider with ChangeNotifier {
+  static const String _baseUrl = 'http://10.0.2.2:5000/auth';
+  static const String _tokenKey = 'token';
+  static const String _espIpKey = 'http://10.0.2.2:5001'; // Key for ESP IP
+
+  String? _token;
+  String? _userId;
+  String? _role;
+  Map<String, dynamic>? _userProfile;
+  String? _espIp; // Store ESP IP
+
+  // Getters
+  bool get isLoggedIn => _token != null && !JwtDecoder.isExpired(_token!);
+  String? get token => _token;
+  String? get userId => _userId;
+  String? get role => _role;
+  Map<String, dynamic>? get userProfile => _userProfile;
+  String? get espIp => _espIp;
+
+  AuthProvider() {
+    _loadToken();
+    _loadEspIp();
+  }
+
+  Future<void> _loadToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _token = prefs.getString(_tokenKey);
+
+      if (_token != null) {
+        if (JwtDecoder.isExpired(_token!)) {
+          await logout();
+          return;
+        }
+
+        final decodedToken = JwtDecoder.decode(_token!);
+        _userId = decodedToken['userId']?.toString();
+        _role = decodedToken['role']?.toString();
+        await fetchUserProfile();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading token: $e');
+      await logout();
+    }
+  }
+
+  // Load ESP IP
+  Future<void> _loadEspIp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _espIp = prefs.getString(_espIpKey);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error loading ESP IP: $e');
+    }
+  }
+
+  // Save ESP IP
+  Future<void> saveEspIp(String ip) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_espIpKey, ip);
+      _espIp = ip;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error saving ESP IP: $e');
+      throw Exception('Failed to save ESP IP');
+    }
+  }
+
+  // Clear ESP IP
+  Future<void> clearEspIp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_espIpKey);
+      _espIp = null;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error clearing ESP IP: $e');
+    }
+  }
+
+  // Fetch user profile
+  Future<void> fetchUserProfile() async {
+    if (_token == null) {
+      _userProfile = null;
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/../users/me'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        _userProfile = json.decode(response.body);
+        notifyListeners();
+      } else {
+        final data = json.decode(response.body);
+        debugPrint('Error fetching user profile: ${data['message']}');
+        _userProfile = null;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Network error fetching user profile: $e');
+      _userProfile = null;
+      notifyListeners();
+    }
+  }
+
+  // Save token
+  Future<void> _saveToken(String token) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_tokenKey, token);
+
+      _token = token;
+      final decodedToken = JwtDecoder.decode(token);
+      _userId = decodedToken['userId']?.toString();
+      _role = decodedToken['role']?.toString();
+      await fetchUserProfile();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error saving token: $e');
+      throw Exception('Failed to save credentials');
+    }
+  }
+
+  // Clear credentials
+  Future<void> logout() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_tokenKey);
+
+      _token = null;
+      _userId = null;
+      _role = null;
+      _userProfile = null;
+      await clearEspIp();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error during logout: $e');
+      throw Exception('Failed to logout');
+    }
+  }
+
+  // Handle API response
+  Future<Map<String, dynamic>> _handleAuthResponse(
+      http.Response response) async {
+    try {
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final token = data['token'];
+        if (token == null) {
+          return {'success': false, 'message': 'Token not found in response'};
+        }
+
+        await _saveToken(token);
+        return {'success': true};
+      } else {
+        return {
+          'success': false,
+          'message': data['message'] ?? 'Authentication failed'
+        };
+      }
+    } catch (e) {
+      debugPrint('Error handling auth response: $e');
+      return {'success': false, 'message': 'Failed to process response'};
+    }
+  }
+
+  // Sign up method
+  Future<Map<String, dynamic>> signUp({
+    required String name,
+    required String email,
+    required String password,
+    required String phoneNumber,
+    required String birthdate,
+    required String role,
+    String? bloodPressureType,
+    String? patientPhoneNumber,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'name': name,
+          'email': email.trim(),
+          'password': password,
+          'phoneNumber': phoneNumber.trim(),
+          'birthdate': birthdate,
+          'role': role,
+          if (bloodPressureType != null) 'bloodPressureType': bloodPressureType,
+          if (patientPhoneNumber != null)
+            'patientPhoneNumber': patientPhoneNumber.trim(),
+        }),
+      );
+
+      return await _handleAuthResponse(response);
+    } catch (e) {
+      debugPrint('Error during signup: $e');
+      return {
+        'success': false,
+        'message': 'Network error occurred. Please try again.'
+      };
+    }
+  }
+
+  // Login method
+  Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'email': email.trim(),
+          'password': password,
+        }),
+      );
+
+      return await _handleAuthResponse(response);
+    } catch (e) {
+      debugPrint('Error during login: $e');
+      return {
+        'success': false,
+        'message': 'Network error occurred. Please try again.'
+      };
+    }
+  }
+}
+
+```
+
+
+### File: screens/device_manager_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:intl/intl.dart';
+
+class DeviceManagerPage extends StatefulWidget {
+  const DeviceManagerPage({super.key});
+
+  @override
+  DeviceManagerPageState createState() => DeviceManagerPageState();
+}
+
+class DeviceManagerPageState extends State<DeviceManagerPage> {
+  final TextEditingController _ipController = TextEditingController();
+  String? _savedIpAddress; // Store the entered IP address
+  bool _isHardwareConnected = false; // Hardware connection status
+  String _lastUpdateVersion = '1.2.3'; // Simulated last update version
+  DateTime _lastConnectedTime = DateTime.now().subtract(const Duration(hours: 2)); // Simulated last connected time
+  bool _isTestingConnection = false; // Track if testing connection is in progress
+
+  // Save the IP address and set connection status to "Connected" for any IP
+  void _saveIpAddress() {
+    setState(() {
+      _savedIpAddress = _ipController.text;
+      // Set to "Connected" for any IP address (as requested)
+      _isHardwareConnected = _ipController.text.isNotEmpty;
+      if (_isHardwareConnected) {
+        _lastConnectedTime = DateTime.now(); // Update last connected time
+      }
+    });
+  }
+
+  // Simulate testing the connection (always "Connected" for now)
+  Future<void> _testConnection() async {
+    setState(() {
+      _isTestingConnection = true;
+    });
+    // Simulate a network request delay
+    await Future.delayed(const Duration(seconds: 2));
+    setState(() {
+      _isTestingConnection = false;
+      // Set to "Connected" for any IP address (as requested)
+      _isHardwareConnected = _savedIpAddress != null && _savedIpAddress!.isNotEmpty;
+      if (_isHardwareConnected) {
+        _lastConnectedTime = DateTime.now(); // Update last connected time
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ipController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.blue, Colors.blueAccent],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        title: const Text(
+          'Device Manager',
+          style: TextStyle(color: Colors.white, fontSize: 24),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 30),
+          onPressed: () {
+            Navigator.pushReplacementNamed(context, '/profile');
+          },
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Connection Status with Integrated Circuit Icon
+            Row(
+              children: [
+                Stack(
+                  alignment: Alignment.topRight,
+                  children: [
+                    const Icon(
+                      Icons.memory,
+                      size: 40,
+                      color: Colors.black54,
+                    ),
+                    Container(
+                      width: 15,
+                      height: 15,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _isHardwareConnected ? Colors.green : Colors.red,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  _isHardwareConnected ? 'Connected' : 'Not Connected',
+                  style: TextStyle(
+                    fontSize: 22,
+                    color: _isHardwareConnected ? Colors.green : Colors.red,
+                  ),
+                ),
+              ],
+            ).animate().fadeIn(duration: 800.ms).slideX(),
+            const SizedBox(height: 20),
+
+            // IP Address Input Section
+            Card(
+              elevation: 5,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Enter Hardware Module IP Address',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _ipController,
+                      decoration: InputDecoration(
+                        labelText: 'IP Address',
+                        labelStyle: const TextStyle(fontSize: 18),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        hintText: 'e.g., 192.168.1.1',
+                        hintStyle: const TextStyle(fontSize: 16, color: Colors.grey),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                      ),
+                      style: const TextStyle(fontSize: 18),
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Colors.blue, Colors.blueAccent],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: ElevatedButton(
+                        onPressed: _saveIpAddress,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          shadowColor: Colors.transparent,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text(
+                          'Save & Connect',
+                          style: TextStyle(fontSize: 18),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ).animate().fadeIn(duration: 800.ms).slideY(),
+            const SizedBox(height: 20),
+
+            // Hardware Status Table
+            Card(
+              elevation: 5,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Hardware Status',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    Table(
+                      border: TableBorder.all(color: Colors.grey[300]!),
+                      children: [
+                        const TableRow(
+                          children: [
+                            Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: Text(
+                                'IP Address',
+                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: Text(
+                                'Status',
+                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: Text(
+                                'Action',
+                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                        TableRow(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                _savedIpAddress ?? 'Not Set',
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                _isHardwareConnected ? 'Connected' : 'Not Connected',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: _isHardwareConnected ? Colors.green : Colors.red,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [Colors.blue, Colors.blueAccent],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: ElevatedButton(
+                                  onPressed: _isTestingConnection || _savedIpAddress == null ? null : _testConnection,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.transparent,
+                                    foregroundColor: Colors.white,
+                                    shadowColor: Colors.transparent,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: _isTestingConnection
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Text(
+                                          'Test Connection',
+                                          style: TextStyle(fontSize: 16),
+                                        ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ).animate().fadeIn(duration: 800.ms).slideY(),
+            const SizedBox(height: 20),
+
+            // Hardware Analysis
+            Card(
+              elevation: 5,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Hardware Analysis',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.update,
+                          color: Colors.blue,
+                          size: 28,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Last Update Version: $_lastUpdateVersion',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.access_time,
+                          color: Colors.blue,
+                          size: 28,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          // 'Last Connected: ${DateFormat('MMM d, yyyy, HH:mm').format(_lastConnectedTime)}',
+                          'Last Connected: ${DateFormat('MMM d, HH:mm').format(_lastConnectedTime)}',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ).animate().fadeIn(duration: 800.ms).slideY(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+
+### File: screens/home_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+
+class HomePage extends StatelessWidget {
+  const HomePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // Access the AuthProvider to check authentication state
+    final authProvider = Provider.of<AuthProvider>(context);
+
+    // If the user is logged in, redirect to ProfilePage
+    if (authProvider.isLoggedIn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.pushReplacementNamed(context, '/profile');
+      });
+      return const SizedBox.shrink(); // Temporary widget while redirecting
+    }
+
+    // If not logged in, show the landing page
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.blue, Colors.lightBlueAccent],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: Card(
+              elevation: 10,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              color: Colors.white.withAlpha((0.2 * 255).round()), // Updated glassmorphism effect
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // App Title
+                    const Text(
+                      'HCE - Health Companion for Elderly',
+                      style: TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black26,
+                            offset: Offset(2, 2),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      textAlign: TextAlign.center,
+                    )
+                        .animate()
+                        .fadeIn(duration: 1000.ms)
+                        .slideY(begin: Offset(0, -0.2).dy),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Monitor heart rate and blood pressure with ESP hardware',
+                      style: TextStyle(
+                        fontSize: 20,
+                        color: Colors.white70,
+                      ),
+                      textAlign: TextAlign.center,
+                    )
+                        .animate()
+                        .fadeIn(duration: 1000.ms)
+                        .slideY(begin: Offset(0, 0.2).dy, delay: 200.ms),
+                    const SizedBox(height: 40),
+
+                    // Animated Icons Row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        // Chart Analysis Icon
+                        Column(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [Colors.white24, Colors.transparent],
+                                  center: Alignment.center,
+                                  radius: 0.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.insert_chart,
+                                size: 60,
+                                color: Colors.white,
+                              ).animate(
+                                onPlay: (controller) => controller.repeat(),
+                              ).scale(
+                                duration: 800.ms,
+                                begin: const Offset(1.0,1.0),
+                                end: const Offset(1.2,1.2),
+                                curve: Curves.easeInOut,
+                              ).then().scale(
+                                duration: 400.ms,
+                                begin: const Offset(1.2,1.2),
+                                end: const Offset(1.0,1.0),
+                                curve: Curves.easeInOut,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Chart Analysis',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                        // Companion Icon
+                        Column(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [Colors.white24, Colors.transparent],
+                                  center: Alignment.center,
+                                  radius: 0.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.people,
+                                size: 60,
+                                color: Colors.white,
+                              ).animate(
+                                onPlay: (controller) => controller.repeat(),
+                              ).scale(
+                                duration: 800.ms,
+                                begin: const Offset(1.0,1.0),
+                                end: const Offset(1.2,1.2),
+                                curve: Curves.easeInOut,
+                              ).then().scale(
+                                duration: 400.ms,
+                                begin: const Offset(1.2,1.2),
+                                end: const Offset(1.0,1.0),
+                                curve: Curves.easeInOut,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Companions',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                        // Patients Icon
+                        Column(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [Colors.white24, Colors.transparent],
+                                  center: Alignment.center,
+                                  radius: 0.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.person,
+                                size: 60,
+                                color: Colors.white,
+                              ).animate(
+                                onPlay: (controller) => controller.repeat(),
+                              ).scale(
+                                duration: 800.ms,
+                                begin: const Offset(1.0,1.0),
+                                end: const Offset(1.2,1.2),
+                                curve: Curves.easeInOut,
+                              ).then().scale(
+                                duration: 400.ms,
+                                begin: const Offset(1.2,1.2),
+                                end: const Offset(1.0,1.0),
+                                curve: Curves.easeInOut,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Patients',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 60),
+
+                    // Login Button
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Colors.blue, Colors.blueAccent],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(30),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black26,
+                            offset: Offset(0, 4),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      ),
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pushNamed(context, '/login');
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          shadowColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 40,
+                            vertical: 15,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                        ),
+                        child: const Text(
+                          'Login to Continue',
+                          style: TextStyle(
+                            fontSize: 20,
+                          ),
+                        ),
+                      ),
+                    ).animate().fadeIn(duration: 1000.ms).scale(delay: 800.ms),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+
+### File: screens/login_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:another_flushbar/flushbar.dart';
+import '../providers/auth_provider.dart';
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  static const Color whiteBackground = Color.fromRGBO(255, 255, 255, 0.9);
+
+  void _showErrorMessage(String message) {
+    Flushbar(
+      message: message,
+      messageSize: 18,
+      backgroundColor: Colors.red,
+      duration: const Duration(seconds: 5),
+      flushbarPosition: FlushbarPosition.TOP,
+      margin: const EdgeInsets.all(8),
+      borderRadius: BorderRadius.circular(8),
+      icon: const Icon(
+        Icons.error_outline,
+        size: 28,
+        color: Colors.white,
+      ),
+      leftBarIndicatorColor: Colors.white,
+      dismissDirection: FlushbarDismissDirection.HORIZONTAL,
+    ).show(context);
+  }
+
+  Future<void> _login() async {
+    if (_isLoading) return;
+
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      _showErrorMessage('Please fill in all fields');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final result = await authProvider.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      if (mounted) {
+        if (result['success']) {
+          print('Login successful, token: ${authProvider.token}');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Login successful!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pushReplacementNamed(context, '/profile');
+        } else {
+          _showErrorMessage(result['message'] ?? 'Login failed. Please try again.');
+        }
+      }
+    } catch (e) {
+      _showErrorMessage('An error occurred. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String hintText,
+    required IconData icon,
+    bool isPassword = false,
+  }) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: whiteBackground,
+        hintText: hintText,
+        hintStyle: const TextStyle(fontSize: 18),
+        prefixIcon: Icon(icon, color: Colors.blue, size: 28),
+        border: const OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(30)),
+          borderSide: BorderSide.none,
+        ),
+      ),
+      obscureText: isPassword,
+      keyboardType: isPassword ? TextInputType.text : TextInputType.emailAddress,
+      style: const TextStyle(fontSize: 18),
+    );
+  }
+
+  Widget _buildLoginButton() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Colors.blue, Colors.blueAccent],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black26,
+            offset: Offset(0, 4),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: ElevatedButton(
+        onPressed: _isLoading ? null : _login,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          shadowColor: Colors.transparent,
+          padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+          ),
+        ),
+        child: _isLoading
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+            : const Text(
+                'Login',
+                style: TextStyle(fontSize: 20),
+              ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.lightBlueAccent, size: 30),
+          onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
+        ),
+        title: const Text(
+          'Login',
+          style: TextStyle(color: Colors.lightBlueAccent, fontSize: 24),
+        ),
+      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.blue, Colors.lightBlueAccent],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 30.0, vertical: 20.0),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: MediaQuery.of(context).size.height -
+                    MediaQuery.of(context).padding.top -
+                    MediaQuery.of(context).padding.bottom,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'HCE Login',
+                    style: TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 40),
+                  _buildTextField(
+                    controller: _emailController,
+                    hintText: 'Email',
+                    icon: Icons.email,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildTextField(
+                    controller: _passwordController,
+                    hintText: 'Password',
+                    icon: Icons.lock,
+                    isPassword: true,
+                  ),
+                  const SizedBox(height: 30),
+                  _buildLoginButton(),
+                  const SizedBox(height: 20),
+                  GestureDetector(
+                    onTap: () => Navigator.pushNamed(context, '/signup'),
+                    child: const Text(
+                      "Don't have an account? Sign Up",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+
+### File: screens/messages_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+import '../main.dart';
+
+class MessagesPage extends StatefulWidget {
+  final String userId;
+  final String recipientId;
+  final String recipientName;
+
+  const MessagesPage({
+    super.key,
+    required this.userId,
+    required this.recipientId,
+    required this.recipientName,
+  });
+
+  @override
+  MessagesPageState createState() => MessagesPageState();
+}
+
+class MessagesPageState extends State<MessagesPage> {
+  List<Map<String, dynamic>> messages = [];
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  static final http.Client _client = http.Client();
+  static const String baseUrl = AppConfig.baseUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    // Check if the user is logged in
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isLoggedIn || authProvider.token == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.pushReplacementNamed(context, '/login');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please log in to access messages.')),
+        );
+      });
+      return;
+    }
+    fetchMessages();
+  }
+
+  Future<void> fetchMessages() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) {
+      Navigator.pushReplacementNamed(context, '/login');
+      return;
+    }
+
+    final url = '$baseUrl/messages/${widget.recipientId}';
+    print('Fetching messages from $url with token: $token');
+    final response = await _client.get(
+      Uri.parse(url),
+      headers: {
+        'Authorization': 'Bearer $token',
+      },
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final List<dynamic> data = jsonDecode(response.body);
+      setState(() {
+        messages = data.cast<Map<String, dynamic>>();
+      });
+
+      // Mark messages as seen
+      for (var message in messages) {
+        if (message['recipientId']['_id'] == widget.userId &&
+            message['seenTime'] == null) {
+          await markMessageAsSeen(message['_id']);
+        }
+      }
+
+      // Scroll to the bottom
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+    } else if (response.statusCode == 401) {
+      Navigator.pushReplacementNamed(context, '/login');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session expired. Please log in again.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load messages: ${response.body}')),
+      );
+    }
+  }
+
+  Future<void> markMessageAsSeen(String messageId) async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) {
+      Navigator.pushReplacementNamed(context, '/login');
+      return;
+    }
+
+    final url = '$baseUrl/messages/$messageId/seen';
+    print('Marking message as seen: $url with token: $token');
+    final response = await _client.put(
+      Uri.parse(url),
+      headers: {
+        'Authorization': 'Bearer $token',
+      },
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+  }
+
+  Future<void> sendMessage(String content) async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) {
+      Navigator.pushReplacementNamed(context, '/login');
+      return;
+    }
+
+    final url = '$baseUrl/messages';
+    print('Sending message to $url with token: $token');
+    final response = await _client.post(
+      Uri.parse(url),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'recipientId': widget.recipientId,
+        'content': content,
+      }),
+    );
+    print('Response status: ${response.statusCode}, body: ${response.body}');
+
+    if (response.statusCode == 201) {
+      _messageController.clear();
+      await fetchMessages();
+    } else if (response.statusCode == 401) {
+      Navigator.pushReplacementNamed(context, '/login');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session expired. Please log in again.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send message: ${response.body}')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.blue,
+        title: Text(
+          widget.recipientName,
+          style: const TextStyle(color: Colors.white, fontSize: 24),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(8.0),
+              itemCount: messages.length,
+              itemBuilder: (context, index) {
+                final message = messages[index];
+                final isSentByMe = message['senderId']['_id'] == widget.userId;
+                return Align(
+                  alignment:
+                      isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 4.0),
+                    padding: const EdgeInsets.all(12.0),
+                    decoration: BoxDecoration(
+                      color: isSentByMe ? Colors.blue[100] : Colors.grey[200],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: isSentByMe
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message['content'],
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _formatTimestamp(message['sentTime']),
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.grey),
+                            ),
+                            const SizedBox(width: 4),
+                            if (isSentByMe)
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.check,
+                                    size: 16,
+                                    color: message['receivedTime'] != null
+                                        ? Colors.blue
+                                        : Colors.grey,
+                                  ),
+                                  if (message['seenTime'] != null)
+                                    const Icon(
+                                      Icons.check,
+                                      size: 16,
+                                      color: Colors.blue,
+                                    ),
+                                ],
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _messageController,
+                    decoration: InputDecoration(
+                      hintText: 'Type a message...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.send, color: Colors.blue),
+                  onPressed: () {
+                    if (_messageController.text.trim().isNotEmpty) {
+                      sendMessage(_messageController.text.trim());
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTimestamp(String? timestamp) {
+    if (timestamp == null) return '';
+    final dateTime = DateTime.parse(timestamp).toLocal();
+    return '${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+```
+
+
+### File: screens/profile_page.dart
+```dart
+
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'dart:async';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../providers/api_service.dart';
+import '../providers/auth_provider.dart';
+
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  ProfilePageState createState() => ProfilePageState();
+}
+
+class ProfilePageState extends State<ProfilePage> {
+  bool isHardwareConnected = false;
+  List<FlSpot> bloodPressureData = [];
+  List<Map<String, dynamic>> weeklyReadings = [];
+  Map<String, dynamic>? userData;
+  Map<String, dynamic>? companionData;
+  Map<String, dynamic>? doctorData;
+  List<dynamic> nearbyLocations = [];
+  late WebViewController _webViewController;
+  bool _isMapLoading = true;
+  String lastBeatTime = '';
+  bool isMeasurementActive = false;
+  int beatsDetected = 0;
+  double currentBpm = 0;
+  double currentSpO2 = 0;
+  Position? currentPosition;
+  Timer? _beatTimer;
+  int unseenMessageCount = 0;
+  bool _hasError = false;
+  String _errorMessage = '';
+  DateTime? selectedDate;
+  List<String> datesWithData = [];
+  List<Map<String, dynamic>> selectedDateReadings = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isLoggedIn || authProvider.token == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.pushReplacementNamed(context, '/login');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Please log in to access your profile.')),
+        );
+      });
+      return;
+    }
+    _checkEspHealth();
+    _getCurrentLocation(); // Fetch the user's location
+    loadData();
+    startBeatPolling();
+
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            setState(() {
+              _isMapLoading = true;
+            });
+          },
+          onPageFinished: (url) {
+            setState(() {
+              _isMapLoading = false;
+            });
+          },
+        ),
+      );
+  }
+
+  @override
+  void dispose() {
+    _beatTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkEspHealth() async {
+    final isConnected = await ApiService().checkEspHealth();
+    setState(() {
+      isHardwareConnected = isConnected;
+    });
+  }
+  
+  Future<void> _updateMapLocation() async {
+    if (currentPosition == null) return;
+    
+    final lat = currentPosition!.latitude;
+    final lng = currentPosition!.longitude;
+    
+    // Calculate bounding box (approximately 1km around the point)
+    final double offset = 0.01; // roughly 1km
+    final String bbox = '${lng - offset}%2C${lat - offset}%2C${lng + offset}%2C${lat + offset}';
+    
+    final String mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=$bbox&layer=mapnik&marker=$lat%2C$lng';
+    
+    await _webViewController.loadRequest(Uri.parse(mapUrl));
+  }
+  
+  Future<void> _showNearbyLocationsOnMap() async {
+    if (currentPosition == null || nearbyLocations.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No nearby locations available')),
+      );
+      return;
+    }
+    
+    final lat = currentPosition!.latitude;
+    final lng = currentPosition!.longitude;
+    
+    // Calculate bounding box to include all nearby locations
+    double minLat = lat;
+    double maxLat = lat;
+    double minLng = lng;
+    double maxLng = lng;
+    
+    for (final location in nearbyLocations) {
+      final locLat = location['latitude'] as double;
+      final locLng = location['longitude'] as double;
+      
+      minLat = min(minLat, locLat);
+      maxLat = max(maxLat, locLat);
+      minLng = min(minLng, locLng);
+      maxLng = max(maxLng, locLng);
+    }
+    
+    // Add some padding
+    final double padding = 0.005;
+    minLat -= padding;
+    maxLat += padding;
+    minLng -= padding;
+    maxLng += padding;
+    
+    // Create markers string for all locations
+    final List<String> markers = [];
+    markers.add('$lat,$lng'); // Current location
+    
+    for (final location in nearbyLocations) {
+      final locLat = location['latitude'] as double;
+      final locLng = location['longitude'] as double;
+      markers.add('$locLat,$locLng');
+    }
+    
+    final String markersParam = markers.join('&marker=');
+    final String bbox = '$minLng%2C$minLat%2C$maxLng%2C$maxLat';
+    
+    final String mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=$bbox&layer=mapnik&marker=$markersParam';
+    
+    await _webViewController.loadRequest(Uri.parse(mapUrl));
+  }
+
+  Future<void> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Location services are disabled. Please enable them.')),
+      );
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location permissions are denied.')),
+        );
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Location permissions are permanently denied.')),
+      );
+      return;
+    }
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      setState(() {
+        currentPosition = position;
+      });
+      _updateMapLocation(); // Update the map after getting the location
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error getting location: $e')),
+      );
+    }
+  }
+
+  Future<void> loadData() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) {
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/login');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Session expired. Please log in again.')),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Fetch user data
+      final user = await ApiService().getUserProfile(token);
+      setState(() {
+        userData = user;
+      });
+
+      // Fetch companion data if the user is a patient
+      if (user['role'] == 'Patient' && user['companionId'] != null) {
+        final companion =
+            await ApiService().getCompanion(token, user['companionId']);
+        setState(() {
+          companionData = companion;
+        });
+      }
+
+      // Fetch doctor data if the user is a patient and has a doctor
+      if (user['role'] == 'Patient' &&
+          user['patients'] != null &&
+          user['patients'].isNotEmpty) {
+        final doctor =
+            await ApiService().getCompanion(token, user['patients'][0]['_id']);
+        setState(() {
+          doctorData = doctor;
+        });
+      }
+
+      // Fetch nearby locations
+      final latitude = currentPosition?.latitude ?? 30.033333;
+      final longitude = currentPosition?.longitude ?? 31.233334;
+      final locations =
+          await ApiService().getNearbyLocations(token, latitude, longitude);
+      setState(() {
+        nearbyLocations = locations;
+      });
+
+      // Fetch unseen message count
+      try {
+        final count = await ApiService().getUnseenMessageCount(token);
+        setState(() {
+          unseenMessageCount = count;
+        });
+      } catch (e) {
+        print('Failed to fetch unseen message count: $e');
+        setState(() {
+          unseenMessageCount = 0;
+        });
+      }
+
+      // Fetch dates with readings
+      final dates = await ApiService().getReadingDates(token);
+      setState(() {
+        datesWithData = dates;
+      });
+
+      // Fetch weekly readings (last 7 days)
+      final now = DateTime.now();
+      final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+      final endOfWeek = startOfWeek.add(const Duration(days: 6));
+      final readings =
+          await ApiService().getReadings(token, startOfWeek, endOfWeek);
+      setState(() {
+        weeklyReadings = readings;
+        bloodPressureData = _generateWeeklyData(readings);
+      });
+
+      // Set default selected date to today if data exists
+      final todayStr = DateFormat('yyyy-MM-dd').format(now);
+      if (dates.contains(todayStr)) {
+        await _loadReadingsForDate(now);
+      }
+    } catch (e) {
+      if (e.toString().contains('Unauthorized') ||
+          e.toString().contains('Token is not valid') ||
+          e.toString().contains('401')) {
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/login');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Session expired. Please log in again.')),
+          );
+        }
+      } else {
+        setState(() {
+          _hasError = true;
+          _errorMessage = e.toString();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading profile: $e')),
+        );
+      }
+    }
+  }
+
+  List<FlSpot> _generateWeeklyData(List<Map<String, dynamic>> readings) {
+    final now = DateTime.now();
+    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+    final Map<int, List<Map<String, dynamic>>> dailyReadings = {};
+
+    // Group readings by day
+    for (var reading in readings) {
+      final timestamp = DateTime.parse(reading['timestamp']);
+      final dayOffset = timestamp.difference(startOfWeek).inDays;
+      if (dayOffset >= 0 && dayOffset < 7) {
+        dailyReadings[dayOffset] ??= [];
+        dailyReadings[dayOffset]!.add(reading);
+      }
+    }
+
+    // Calculate average heart rate for each day (3 records or average if more)
+    List<FlSpot> spots = [];
+    for (int day = 0; day < 7; day++) {
+      final dayReadings = dailyReadings[day] ?? [];
+      if (dayReadings.isEmpty) {
+        spots.add(FlSpot(day.toDouble(), 0));
+        continue;
+      }
+
+      double avgHeartRate = 0;
+      if (dayReadings.length <= 3) {
+        avgHeartRate = dayReadings
+                .map((r) => r['heartRate'] as num)
+                .reduce((a, b) => a + b) /
+            dayReadings.length;
+      } else {
+        avgHeartRate = dayReadings
+                .map((r) => r['heartRate'] as num)
+                .reduce((a, b) => a + b) /
+            dayReadings.length;
+      }
+      spots.add(FlSpot(day.toDouble(), avgHeartRate));
+    }
+    return spots;
+  }
+
+  Future<void> _loadReadingsForDate(DateTime date) async {
+    setState(() {
+      selectedDate = date;
+      selectedDateReadings = [];
+    });
+
+    final startOfDay = DateTime(date.year, date.month, date.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) return;
+
+    try {
+      final readings =
+          await ApiService().getReadings(token, startOfDay, endOfDay);
+      setState(() {
+        selectedDateReadings = readings;
+        if (readings.isNotEmpty) {
+          currentBpm = readings.last['heartRate'];
+          currentSpO2 = readings.last['spo2'];
+        }
+      });
+    } catch (e) {
+      print('Error loading readings for date: $e');
+    }
+  }
+
+  void startBeatPolling() {
+    _beatTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+      try {
+        final beatData = await ApiService().getBeatData();
+        setState(() {
+          if (beatData['lastBeatTime'] != null &&
+              beatData['lastBeatTime'] != lastBeatTime) {
+            lastBeatTime = beatData['lastBeatTime'];
+          }
+          isMeasurementActive = beatData['measurementActive'];
+          beatsDetected = beatData['beatsDetected'];
+        });
+      } catch (e) {
+        print('Error polling beat data: $e');
+      }
+    });
+  }
+
+  Future<void> startReading() async {
+    if (!isHardwareConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Device not connected')),
+      );
+      return;
+    }
+
+    if (currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Location not available. Please enable location services.')),
+      );
+      return;
+    }
+
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final token = authProvider.token ?? '';
+      if (token.isEmpty) return;
+
+      final reading = await ApiService().startReading(
+          token, currentPosition!.latitude, currentPosition!.longitude);
+      setState(() {
+        currentBpm = reading['heartRate'];
+        currentSpO2 = reading['spo2'];
+      });
+
+      // Refresh readings for the current date
+      if (selectedDate != null) {
+        await _loadReadingsForDate(selectedDate!);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error starting reading: $e')),
+      );
+    }
+  }
+
+  Future<void> _sendNotification(
+      String recipientId, String recipientName) async {
+    if (currentBpm == 0 || currentSpO2 == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No recent reading available to send')),
+      );
+      return;
+    }
+
+    if (currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Location not available. Please enable location services.')),
+      );
+      return;
+    }
+
+    final messageContent =
+        'Heartbeat: ${currentBpm.toStringAsFixed(1)} BPM, SpO2: ${currentSpO2.toStringAsFixed(1)}%, Location: (${currentPosition!.latitude}, ${currentPosition!.longitude})';
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) return;
+
+    try {
+      final url = '${ApiService.baseUrl}/messages';
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'recipientId': recipientId,
+          'content': messageContent,
+        }),
+      );
+
+      if (response.statusCode == 201) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Notification sent to $recipientName')),
+        );
+      } else {
+        throw Exception('Failed to send notification: ${response.body}');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error sending notification: $e')),
+      );
+    }
+  }
+  
+  Future<void> _sendLocationOnly(String recipientId, String recipientName) async {
+    if (currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Location not available. Please enable location services.')),
+      );
+      return;
+    }
+
+    final messageContent =
+        'My current location: (${currentPosition!.latitude}, ${currentPosition!.longitude})';
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.token ?? '';
+    if (token.isEmpty) return;
+
+    try {
+      final url = '${ApiService.baseUrl}/messages';
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'recipientId': recipientId,
+          'content': messageContent,
+        }),
+      );
+
+      if (response.statusCode == 201) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Location sent to $recipientName')),
+        );
+      } else {
+        throw Exception('Failed to send location: ${response.body}');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error sending location: $e')),
+      );
+    }
+  }
+
+  void _openChat(String recipientId, String recipientName) {
+    Navigator.pushNamed(
+      context, 
+      '/chat',
+      arguments: {
+        'recipientId': recipientId,
+        'recipientName': recipientName,
+      },
+    );
+  }
+  
+  int calculateAge(String birthdate) {
+    DateTime birthDate = DateTime.parse(birthdate);
+    DateTime today = DateTime.now();
+    int age = today.year - birthDate.year;
+    if (today.month < birthDate.month ||
+        (today.month == birthDate.month && today.day < birthDate.day)) {
+      age--;
+    }
+    return age;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.blue,
+        title: const Text(
+          'Profile',
+          style: TextStyle(color: Colors.white, fontSize: 24),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.logout, color: Colors.white, size: 30),
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text(
+                  'Sign Out',
+                  style: TextStyle(fontSize: 22),
+                ),
+                content: const Text(
+                  'Are you sure you want to sign out?',
+                  style: TextStyle(fontSize: 18),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Provider.of<AuthProvider>(context, listen: false)
+                          .logout();
+                      Navigator.pushReplacementNamed(context, '/login');
+                    },
+                    child: const Text(
+                      'Sign Out',
+                      style: TextStyle(fontSize: 16, color: Colors.red),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        actions: [
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.message, color: Colors.white, size: 30),
+                onPressed: () {
+                  Navigator.pushNamed(context, '/user_selection');
+                },
+              ),
+              if (unseenMessageCount > 0)
+                Positioned(
+                  right: 5,
+                  top: 5,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '$unseenMessageCount',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+      body: _hasError
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Failed to load profile: $_errorMessage',
+                    style: const TextStyle(fontSize: 18, color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        _hasError = false;
+                        _errorMessage = '';
+                      });
+                      loadData();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            )
+          : userData == null
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Connection Status
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.pushNamed(context, '/device_manager');
+                        },
+                        child: Row(
+                          children: [
+                            Stack(
+                              alignment: Alignment.topRight,
+                              children: [
+                                const Icon(
+                                  Icons.memory,
+                                  size: 40,
+                                  color: Colors.black54,
+                                ),
+                                Container(
+                                  width: 15,
+                                  height: 15,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isHardwareConnected
+                                        ? Colors.green
+                                        : Colors.red,
+                                    border: Border.all(
+                                        color: Colors.white, width: 2),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              isHardwareConnected
+                                  ? 'Connected'
+                                  : 'Not Connected',
+                              style: TextStyle(
+                                fontSize: 22,
+                                color: isHardwareConnected
+                                    ? Colors.green
+                                    : Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Companion and Doctor Information with Notification Buttons
+                      if (userData!['role'] == 'Patient') ...[
+                        if (companionData != null) ...[
+                          const Text(
+                            'Companion Information',
+                            style: TextStyle(
+                                fontSize: 24, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person,
+                                    color: Colors.blue, size: 40),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        companionData!['name'] ?? 'Unknown',
+                                        style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                      Text(
+                                        'Phone: ${companionData!['phoneNumber'] ?? 'N/A'}',
+                                        style: const TextStyle(fontSize: 16),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.notification_important,
+                                    color: Colors.red,
+                                    size: 28,
+                                  ),
+                                  onPressed: () {
+                                    _sendNotification(companionData!['_id'],
+                                        companionData!['name']);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                        ],
+                        if (doctorData != null) ...[
+                          const Text(
+                            'Doctor Information',
+                            style: TextStyle(
+                                fontSize: 24, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.medical_services,
+                                    color: Colors.blue, size: 40),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        doctorData!['name'] ?? 'Unknown',
+                                        style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                      Text(
+                                        'Phone: ${doctorData!['phoneNumber'] ?? 'N/A'}',
+                                        style: const TextStyle(fontSize: 16),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.notification_important,
+                                    color: Colors.red,
+                                    size: 28,
+                                  ),
+                                  onPressed: () {
+                                    _sendNotification(doctorData!['_id'],
+                                        doctorData!['name']);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                        ],
+                      ],
+
+                      // Date Picker for Readings
+                      const Text(
+                        'Select Date for Readings',
+                        style: TextStyle(
+                            fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final pickedDate = await showDatePicker(
+                            context: context,
+                            initialDate: DateTime.now(),
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime.now(),
+                            selectableDayPredicate: (DateTime date) {
+                              final dateStr =
+                                  DateFormat('yyyy-MM-dd').format(date);
+                              return datesWithData.contains(dateStr);
+                            },
+                            builder: (context, child) {
+                              return Theme(
+                                data: ThemeData.light().copyWith(
+                                  colorScheme: const ColorScheme.light(
+                                    primary: Colors.blue,
+                                    onPrimary: Colors.white,
+                                    surface: Colors.white,
+                                    onSurface: Colors.black,
+                                  ),
+                                  dialogBackgroundColor: Colors.white,
+                                  textButtonTheme: TextButtonThemeData(
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.blue,
+                                    ),
+                                  ),
+                                ),
+                                child: child!,
+                              );
+                            },
+                          );
+                          if (pickedDate != null) {
+                            await _loadReadingsForDate(pickedDate);
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: Text(
+                          selectedDate == null
+                              ? 'Select Date'
+                              : 'Selected: ${DateFormat('yyyy-MM-dd').format(selectedDate!)}',
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Heartbeat Animation Section
+                      const Text(
+                        'Live Heartbeat Monitor',
+                        style: TextStyle(
+                            fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              transform:
+                                  lastBeatTime.isNotEmpty && isMeasurementActive
+                                      ? (Matrix4.identity()..scale(1.3))
+                                      : Matrix4.identity(),
+                              onEnd: () {
+                                if (lastBeatTime.isNotEmpty &&
+                                    isMeasurementActive) {
+                                  setState(() {
+                                    lastBeatTime = '';
+                                  });
+                                }
+                              },
+                              child: const Icon(
+                                Icons.favorite,
+                                color: Colors.red,
+                                size: 40,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    isMeasurementActive
+                                        ? 'Measuring... ($beatsDetected beats)'
+                                        : 'Measurement Complete',
+                                    style: const TextStyle(fontSize: 18),
+                                  ),
+                                  if (currentBpm > 0)
+                                    Text(
+                                      'BPM: ${currentBpm.toStringAsFixed(1)}',
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                                  if (currentSpO2 > 0)
+                                    Text(
+                                      'SpO2: ${currentSpO2.toStringAsFixed(1)}%',
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Selected Date Readings
+                      if (selectedDate != null &&
+                          selectedDateReadings.isNotEmpty) ...[
+                        const Text(
+                          'Readings for Selected Date',
+                          style: TextStyle(
+                              fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 10),
+                        ...selectedDateReadings.map((reading) {
+                          final timestamp =
+                              DateTime.parse(reading['timestamp']);
+                          return ListTile(
+                            title: Text(
+                                'BPM: ${reading['heartRate'].toStringAsFixed(1)}'),
+                            subtitle: Text(
+                              'SpO2: ${reading['spo2'].toStringAsFixed(1)}% | Time: ${DateFormat('HH:mm').format(timestamp)}',
+                            ),
+                          );
+                        }).toList(),
+                        const SizedBox(height: 20),
+                      ],
+
+                      // Weekly Heart Rate Chart
+                      if (userData!['role'] == 'Patient') ...[
+                        const Text(
+                          'Weekly Heart Rate Analysis',
+                          style: TextStyle(
+                              fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          height: 200,
+                          padding: const EdgeInsets.all(16),
+                          child: LineChart(
+                            LineChartData(
+                              gridData: const FlGridData(show: false),
+                              titlesData: FlTitlesData(
+                                bottomTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    getTitlesWidget: (value, meta) {
+                                      final day = value.toInt();
+                                      final date = DateTime.now().subtract(
+                                          Duration(
+                                              days: DateTime.now().weekday -
+                                                  1 -
+                                                  day));
+                                      return Text(
+                                        DateFormat('E').format(date),
+                                        style: const TextStyle(fontSize: 12),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                leftTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    getTitlesWidget: (value, meta) {
+                                      return Text(
+                                        '${value.toInt()} BPM',
+                                        style: const TextStyle(fontSize: 10),
+                                      );
+                                    },
+                                    reservedSize: 50,
+                                  ),
+                                ),
+                                topTitles: const AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false),
+                                ),
+                                rightTitles: const AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false),
+                                ),
+                              ),
+                              borderData: FlBorderData(show: false),
+                              lineBarsData: [
+                                LineChartBarData(
+                                  spots: bloodPressureData,
+                                  isCurved: true,
+                                  color: Colors.blue,
+                                  dotData: const FlDotData(show: false),
+                                  belowBarData: BarAreaData(show: false),
+                                ),
+                              ],
+                              minX: 0,
+                              maxX: 6,
+                              minY: 0,
+                              maxY: 150,
+                            ),
+                          ),
+                        ).animate().fadeIn(duration: 1000.ms).scale(),
+                        const SizedBox(height: 10),
+                      ],
+
+                      // Buttons Bar
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.pushNamed(context, '/view_analysis');
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text(
+                                'View Analysis',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: startReading,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text(
+                                'Read Now',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Companions Section
+                      if (userData!['role'] == 'Patient')
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16.0),
+                              child: Text(
+                                'My Companions',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            // Companion Card
+                            if (companionData != null)
+                              Card(
+                                elevation: 4,
+                                margin: const EdgeInsets.only(bottom: 16),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Row(
+                                    children: [
+                                      // Gravatar/Face Icon
+                                      CircleAvatar(
+                                        radius: 30,
+                                        backgroundColor: Colors.blue.shade100,
+                                        child: Text(
+                                          companionData!['name'][0].toUpperCase(),
+                                          style: const TextStyle(
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.blue,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      // Name and Phone
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              companionData!['name'],
+                                              style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            Text(
+                                              companionData!['phoneNumber'],
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      // Action Icons
+                                      IconButton(
+                                        icon: const Icon(Icons.location_on, color: Colors.green),
+                                        onPressed: () => _sendLocationOnly(
+                                          companionData!['_id'],
+                                          companionData!['name'],
+                                        ),
+                                        tooltip: 'Share Location',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.favorite, color: Colors.red),
+                                        onPressed: () => _sendNotification(
+                                          companionData!['_id'],
+                                          companionData!['name'],
+                                        ),
+                                        tooltip: 'Share Health Reading',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.message, color: Colors.blue),
+                                        onPressed: () => _openChat(
+                                          companionData!['_id'],
+                                          companionData!['name'],
+                                        ),
+                                        tooltip: 'Open Chat',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            
+                            // Doctor Card
+                            if (doctorData != null)
+                              Card(
+                                elevation: 4,
+                                margin: const EdgeInsets.only(bottom: 16),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Row(
+                                    children: [
+                                      // Gravatar/Face Icon
+                                      CircleAvatar(
+                                        radius: 30,
+                                        backgroundColor: Colors.purple.shade100,
+                                        child: Text(
+                                          doctorData!['name'][0].toUpperCase(),
+                                          style: const TextStyle(
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.purple,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      // Name and Phone
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              doctorData!['name'],
+                                              style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            Text(
+                                              doctorData!['phoneNumber'],
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      // Action Icons
+                                      IconButton(
+                                        icon: const Icon(Icons.location_on, color: Colors.green),
+                                        onPressed: () => _sendLocationOnly(
+                                          doctorData!['_id'],
+                                          doctorData!['name'],
+                                        ),
+                                        tooltip: 'Share Location',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.favorite, color: Colors.red),
+                                        onPressed: () => _sendNotification(
+                                          doctorData!['_id'],
+                                          doctorData!['name'],
+                                        ),
+                                        tooltip: 'Share Health Reading',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.message, color: Colors.blue),
+                                        onPressed: () => _openChat(
+                                          doctorData!['_id'],
+                                          doctorData!['name'],
+                                        ),
+                                        tooltip: 'Open Chat',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      
+                      // Map Section
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16.0),
+                        child: Text(
+                          'My Location',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      Card(
+                        elevation: 4,
+                        child: Column(
+                          children: [
+                            SizedBox(
+                              height: 300,
+                              child: Stack(
+                                children: [
+                                  WebViewWidget(controller: _webViewController),
+                                  if (_isMapLoading)
+                                    const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  // Map Control Buttons
+                                  Positioned(
+                                    bottom: 16,
+                                    right: 16,
+                                    child: Column(
+                                      children: [
+                                        // Recenter button
+                                        FloatingActionButton(
+                                          heroTag: "recenterBtn",
+                                          mini: true,
+                                          backgroundColor: Colors.white,
+                                          onPressed: () {
+                                            _updateMapLocation();
+                                          },
+                                          child: const Icon(
+                                            Icons.my_location,
+                                            color: Colors.blue,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        // Show nearby locations button
+                                        FloatingActionButton(
+                                          heroTag: "nearbyBtn",
+                                          mini: true,
+                                          backgroundColor: Colors.white,
+                                          onPressed: () {
+                                            _showNearbyLocationsOnMap();
+                                          },
+                                          child: const Icon(
+                                            Icons.local_pharmacy,
+                                            color: Colors.red,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                currentPosition != null
+                                    ? 'Lat: ${currentPosition!.latitude.toStringAsFixed(6)}, Lng: ${currentPosition!.longitude.toStringAsFixed(6)}'
+                                    : 'Location not available',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Table of Nearby Pharmacies/Doctors
+                      Table(
+                        border: TableBorder.all(color: Colors.grey[300]!),
+                        children: [
+                          const TableRow(
+                            children: [
+                              Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: Text(
+                                  'Name',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                              Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: Text(
+                                  'Type',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                              Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: Text(
+                                  'Distance',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          ...nearbyLocations.map((location) {
+                            final latitude =
+                                currentPosition?.latitude ?? 30.033333;
+                            final longitude =
+                                currentPosition?.longitude ?? 31.233334;
+                            final distance = _calculateDistance(
+                              latitude,
+                              longitude,
+                              location['coordinates']['latitude'],
+                              location['coordinates']['longitude'],
+                            );
+                            return TableRow(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Text(
+                                    location['name'],
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Text(
+                                    location['type'],
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Text(
+                                    '${distance.toStringAsFixed(1)} km',
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+
+                      // User Information
+                      const Text(
+                        'Your Information',
+                        style: TextStyle(
+                            fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                image: DecorationImage(
+                                  image: NetworkImage(
+                                      'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y'),
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    userData!['name'] ?? 'Unknown',
+                                    style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Age: ${calculateAge(userData!['birthdate'])}',
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                                  Text(
+                                    'Email: ${userData!['email']}',
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.edit,
+                                color: Colors.blue,
+                                size: 28,
+                              ),
+                              onPressed: () {
+                                // Edit logic (placeholder)
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+    );
+  }
+
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
+    const double kmPerLatDegree = 111.0;
+    const double kmPerLonDegree = 111.0 * 0.85;
+    final latDiff = (lat2 - lat1) * kmPerLatDegree;
+    final lonDiff = (lon2 - lon1) * kmPerLonDegree;
+    return sqrt(latDiff * latDiff + lonDiff * lonDiff);
+  }
+
+  // void _updateMapLocation() {
+  //   if (currentPosition != null) {
+  //     final latitude = currentPosition!.latitude;
+  //     final longitude = currentPosition!.longitude;
+  //     // Define a bounding box around the user's location (e.g., ±0.01 degrees)
+  //     final bbox =
+  //         '${longitude - 0.01}%2C${latitude - 0.01}%2C${longitude + 0.01}%2C${latitude + 0.01}';
+  //     _webViewController.loadRequest(Uri.parse(
+  //       'https://www.openstreetmap.org/export/embed.html?bbox=$bbox&layer=mapnik&marker=$latitude%2C$longitude',
+  //     ));
+  //   }
+  // }
+}
+
+```
+
+
+### File: screens/signup_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:another_flushbar/flushbar.dart'; // Import Flushbar
+import '../providers/auth_provider.dart';
+
+class SignUpPage extends StatefulWidget {
+  const SignUpPage({super.key});
+
+  @override
+  SignUpPageState createState() => SignUpPageState();
+}
+
+class SignUpPageState extends State<SignUpPage> {
+  // Controllers
+  final TextEditingController nameController = TextEditingController();
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  final TextEditingController phoneController = TextEditingController();
+  final TextEditingController birthdateController = TextEditingController();
+  final TextEditingController patientPhoneController = TextEditingController();
+
+  // State variables
+  String _selectedRole = 'Companion';
+  String? _bloodPressureType;
+  bool _isLoading = false;
+
+  // Constants
+  static const Color whiteBackground = Color.fromRGBO(255, 255, 255, 0.9);
+
+  // Sign up function
+  Future<void> _signUp() async {
+    if (_isLoading) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final result = await authProvider.signUp(
+      name: nameController.text,
+      email: emailController.text,
+      password: passwordController.text,
+      phoneNumber: phoneController.text,
+      birthdate: birthdateController.text,
+      role: _selectedRole,
+      bloodPressureType: _selectedRole == 'Patient' ? _bloodPressureType : null,
+      patientPhoneNumber: _selectedRole == 'Companion' ? patientPhoneController.text : null,
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (result['success']) {
+      // Show success message (bottom SnackBar)
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Signup successful! Please log in.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pushReplacementNamed(context, '/login');
+    } else {
+      // Show error message at the top using Flushbar
+      Flushbar(
+        message: result['message'] ?? 'Signup failed. Please try again.',
+        messageSize: 18, // Larger font for elderly users
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5), // Hides after 5 seconds
+        flushbarPosition: FlushbarPosition.TOP, // Display at the top
+        margin: const EdgeInsets.all(8),
+        borderRadius: BorderRadius.circular(8),
+        icon: const Icon(
+          Icons.error_outline,
+          size: 28,
+          color: Colors.white,
+        ),
+        leftBarIndicatorColor: Colors.white,
+        dismissDirection: FlushbarDismissDirection.HORIZONTAL, // Swipe to dismiss
+      ).show(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    phoneController.dispose();
+    birthdateController.dispose();
+    patientPhoneController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.blue, Colors.lightBlueAccent],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 30.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(height: 20),
+                const Text(
+                  'HCE Sign Up',
+                  style: TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 30),
+
+                // Role Selection
+                const Text(
+                  'Select your role:',
+                  style: TextStyle(fontSize: 20, color: Colors.white),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Radio<String>(
+                      value: 'Companion',
+                      groupValue: _selectedRole,
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedRole = value!;
+                        });
+                      },
+                      activeColor: Colors.white,
+                    ),
+                    const Text(
+                      'Companion',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                    Radio<String>(
+                      value: 'Patient',
+                      groupValue: _selectedRole,
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedRole = value!;
+                        });
+                      },
+                      activeColor: Colors.white,
+                    ),
+                    const Text(
+                      'Patient',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Image Upload Placeholder
+                Container(
+                  height: 100,
+                  width: 100,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: whiteBackground,
+                  ),
+                  child: const Icon(
+                    Icons.camera_alt,
+                    color: Colors.blue,
+                    size: 40,
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Name Field
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    filled: true,
+                    fillColor: whiteBackground,
+                    hintText: 'Full Name',
+                    hintStyle: TextStyle(fontSize: 18),
+                    prefixIcon: Icon(Icons.person, color: Colors.blue, size: 28),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(30)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+
+                // Email Field
+                TextField(
+                  controller: emailController,
+                  decoration: const InputDecoration(
+                    filled: true,
+                    fillColor: whiteBackground,
+                    hintText: 'Email',
+                    hintStyle: TextStyle(fontSize: 18),
+                    prefixIcon: Icon(Icons.email, color: Colors.blue, size: 28),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(30)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+
+                // Password Field
+                TextField(
+                  controller: passwordController,
+                  decoration: const InputDecoration(
+                    filled: true,
+                    fillColor: whiteBackground,
+                    hintText: 'Password',
+                    hintStyle: TextStyle(fontSize: 18),
+                    prefixIcon: Icon(Icons.lock, color: Colors.blue, size: 28),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(30)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  obscureText: true,
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+
+                // Phone Field
+                TextField(
+                  controller: phoneController,
+                  decoration: const InputDecoration(
+                    filled: true,
+                    fillColor: whiteBackground,
+                    hintText: 'Phone Number',
+                    hintStyle: TextStyle(fontSize: 18),
+                    prefixIcon: Icon(Icons.phone, color: Colors.blue, size: 28),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(30)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+
+                // Birthdate Field
+                TextField(
+                  controller: birthdateController,
+                  decoration: const InputDecoration(
+                    filled: true,
+                    fillColor: whiteBackground,
+                    hintText: 'Birthdate (YYYY-MM-DD)',
+                    hintStyle: TextStyle(fontSize: 18),
+                    prefixIcon: Icon(Icons.calendar_today, color: Colors.blue, size: 28),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(30)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  keyboardType: TextInputType.datetime,
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+
+                // Patient Phone Number Field (for Companion only)
+                if (_selectedRole == 'Companion')
+                  TextField(
+                    controller: patientPhoneController,
+                    decoration: const InputDecoration(
+                      filled: true,
+                      fillColor: whiteBackground,
+                      hintText: 'Patient Phone Number (e.g., +1234567890)',
+                      hintStyle: TextStyle(fontSize: 18),
+                      prefixIcon: Icon(Icons.person_search, color: Colors.blue, size: 28),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(30)),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                if (_selectedRole == 'Companion') const SizedBox(height: 20),
+
+                // Blood Pressure Type (for Patient only)
+                if (_selectedRole == 'Patient')
+                  DropdownButtonFormField<String>(
+                    decoration: const InputDecoration(
+                      filled: true,
+                      fillColor: whiteBackground,
+                      hintText: 'Blood Pressure Type',
+                      hintStyle: TextStyle(fontSize: 18),
+                      prefixIcon: Icon(Icons.favorite, color: Colors.blue, size: 28),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(30)),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    hint: const Text(
+                      'Select Blood Pressure Type',
+                      style: TextStyle(fontSize: 18),
+                    ),
+                    value: _bloodPressureType,
+                    items: ['High', 'Average', 'Low']
+                        .map((type) => DropdownMenuItem(
+                              value: type,
+                              child: Text(type, style: const TextStyle(fontSize: 18)),
+                            ))
+                        .toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        _bloodPressureType = value;
+                      });
+                    },
+                  ),
+                const SizedBox(height: 30),
+
+                // Sign-Up Button
+                _isLoading
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Colors.blue, Colors.blueAccent],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black26,
+                              offset: Offset(0, 4),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton(
+                          onPressed: _signUp,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            foregroundColor: Colors.white,
+                            shadowColor: Colors.transparent,
+                            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                          ),
+                          child: const Text(
+                            'Sign Up',
+                            style: TextStyle(fontSize: 20),
+                          ),
+                        ),
+                      ),
+                const SizedBox(height: 20),
+
+                // Back to Login Link
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      'Already have an account? ',
+                      style: TextStyle(color: Colors.white70, fontSize: 16),
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.pushReplacementNamed(context, '/login');
+                      },
+                      child: const Text(
+                        'Login',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+
+### File: screens/user_selection_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+import '../providers/api_service.dart';
+
+class UserSelectionPage extends StatefulWidget {
+  const UserSelectionPage({super.key});
+
+  @override
+  UserSelectionPageState createState() => UserSelectionPageState();
+}
+
+class UserSelectionPageState extends State<UserSelectionPage> {
+  final TextEditingController _phoneController = TextEditingController();
+  List<Map<String, dynamic>> users = [];
+  bool _isLoading = false;
+  String _errorMessage = '';
+
+  Future<void> _searchUsers() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+      users = [];
+    });
+
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final token = authProvider.token ?? '';
+      if (token.isEmpty) {
+        Navigator.pushReplacementNamed(context, '/login');
+        return;
+      }
+
+      final results =
+          await ApiService().searchUsers(token, _phoneController.text.trim());
+      setState(() {
+        users = results;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.blue,
+        title: const Text(
+          'Select User to Chat',
+          style: TextStyle(color: Colors.white, fontSize: 24),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(
+              controller: _phoneController,
+              decoration: InputDecoration(
+                labelText: 'Enter Phone Number',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: _searchUsers,
+                ),
+              ),
+              keyboardType: TextInputType.phone,
+            ),
+            const SizedBox(height: 20),
+            if (_isLoading)
+              const Center(child: CircularProgressIndicator())
+            else if (_errorMessage.isNotEmpty)
+              Text(
+                _errorMessage,
+                style: const TextStyle(color: Colors.red, fontSize: 16),
+              )
+            else if (users.isEmpty)
+              const Text('No users found.')
+            else
+              Expanded(
+                child: ListView.builder(
+                  itemCount: users.length,
+                  itemBuilder: (context, index) {
+                    final user = users[index];
+                    return ListTile(
+                      leading: const Icon(Icons.person, color: Colors.blue),
+                      title: Text(user['name'] ?? 'Unknown'),
+                      subtitle: Text(user['phoneNumber'] ?? 'N/A'),
+                      onTap: () {
+                        Navigator.pushNamed(
+                          context,
+                          '/messages',
+                          arguments: {
+                            'userId': Provider.of<AuthProvider>(context,
+                                    listen: false)
+                                .userId,
+                            'recipientId': user['_id'],
+                            'recipientName': user['name'] ?? 'Unknown',
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+```
+
+
+### File: screens/view_analysis_page.dart
+```dart
+
+import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
+
+class ViewAnalysisPage extends StatefulWidget {
+  const ViewAnalysisPage({super.key});
+
+  @override
+  ViewAnalysisPageState createState() => ViewAnalysisPageState();
+}
+
+class ViewAnalysisPageState extends State<ViewAnalysisPage> {
+  // Simulated weekly data: Map of DateTime (day) to List of readings (time, value)
+  final Map<DateTime, List<Map<String, dynamic>>> weeklyData = {};
+  int currentDayIndex = 0; // Index of the current day being viewed
+
+  @override
+  void initState() {
+    super.initState();
+    // Simulate data for the past 7 days
+    DateTime today = DateTime.now();
+    for (int i = 6; i >= 0; i--) {
+      DateTime day = today.subtract(Duration(days: i));
+      // Simulate 6 readings per day (every 4 hours)
+      List<Map<String, dynamic>> readings = [];
+      for (int hour = 0; hour < 24; hour += 4) {
+        double systolic = 110 + (hour % 5) * 5 + (i % 3) * 5; // Simulated variation
+        readings.add({
+          'time': DateTime(day.year, day.month, day.day, hour),
+          'systolic': systolic,
+        });
+      }
+      weeklyData[DateTime(day.year, day.month, day.day)] = readings;
+    }
+    // Set the current day to the most recent day (today)
+    currentDayIndex = weeklyData.keys.length - 1;
+  }
+
+  // Get the current day's data
+  DateTime get currentDay => weeklyData.keys.elementAt(currentDayIndex);
+  List<Map<String, dynamic>> get currentReadings => weeklyData[currentDay]!;
+
+  // Navigate to the previous day
+  void previousDay() {
+    if (currentDayIndex > 0) {
+      setState(() {
+        currentDayIndex--;
+      });
+    }
+  }
+
+  // Navigate to the next day
+  void nextDay() {
+    if (currentDayIndex < weeklyData.keys.length - 1) {
+      setState(() {
+        currentDayIndex++;
+      });
+    }
+  }
+
+  // Determine the label for a reading (Above Normal, Normal, Below Normal)
+  String getReadingLabel(double systolic) {
+    if (systolic > 120) return 'Above Normal';
+    if (systolic < 90) return 'Below Normal';
+    return 'Normal';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Prepare chart data
+    List<FlSpot> chartData = currentReadings.asMap().entries.map((entry) {
+      int index = entry.key;
+      double systolic = entry.value['systolic'];
+      return FlSpot(index.toDouble(), systolic);
+    }).toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.blue,
+        title: const Text(
+          'View Analysis',
+          style: TextStyle(color: Colors.white, fontSize: 24),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 30),
+          onPressed: () {
+            Navigator.pushReplacementNamed(context, '/profile');
+          },
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Day Navigation
+            Row(
+              mainAxisSize: MainAxisSize.min, // Prevent Row from taking full width
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.arrow_left,
+                    size: 40,
+                    color: Colors.blue,
+                  ),
+                  onPressed: currentDayIndex > 0 ? previousDay : null,
+                  disabledColor: Colors.grey,
+                ),
+                Expanded( // Wrap Text in Expanded to prevent overflow
+                  child: Text(
+                    DateFormat('EEEE, MMM d, yyyy').format(currentDay),
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis, // Truncate with "..." if too long
+                    textAlign: TextAlign.center, // Center the text
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.arrow_right,
+                    size: 40,
+                    color: currentDayIndex < weeklyData.keys.length - 1 ? Colors.blue : Colors.grey,
+                  ),
+                  onPressed: currentDayIndex < weeklyData.keys.length - 1 ? nextDay : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Time-Based Chart
+            const Text(
+              'Blood Pressure Over Time',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              height: 300,
+              padding: const EdgeInsets.all(16),
+              child: LineChart(
+                LineChartData(
+                  gridData: const FlGridData(show: false),
+                  titlesData: FlTitlesData(
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          int index = value.toInt();
+                          if (index >= 0 && index < currentReadings.length) {
+                            DateTime time = currentReadings[index]['time'];
+                            return Text(
+                              DateFormat('HH:mm').format(time),
+                              style: const TextStyle(fontSize: 14),
+                            );
+                          }
+                          return const Text('');
+                        },
+                      ),
+                    ),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          return Text(
+                            '${value.toInt()} mmHg',
+                            style: const TextStyle(fontSize: 14),
+                          );
+                        },
+                        reservedSize: 40,
+                      ),
+                    ),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                  ),
+                  borderData: FlBorderData(show: false),
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots: chartData,
+                      isCurved: true,
+                      color: Colors.blue, // Compatible with older fl_chart versions
+                      dotData: const FlDotData(show: true),
+                      belowBarData: BarAreaData(show: false),
+                    ),
+                  ],
+                  minX: 0,
+                  maxX: (currentReadings.length - 1).toDouble(),
+                  minY: 80,
+                  maxY: 150,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Table of Readings
+            const Text(
+              'Daily Readings Summary',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Table(
+              border: TableBorder.all(color: Colors.grey[300]!),
+              children: [
+                const TableRow(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text(
+                        'Time',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text(
+                        'Systolic (mmHg)',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text(
+                        'Status',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                ...currentReadings.asMap().entries.map((entry) {
+                  DateTime time = entry.value['time'];
+                  double systolic = entry.value['systolic'];
+                  String status = getReadingLabel(systolic);
+                  Color statusColor = status == 'Normal'
+                      ? Colors.green
+                      : status == 'Above Normal'
+                          ? Colors.red
+                          : Colors.orange;
+
+                  return TableRow(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          DateFormat('HH:mm').format(time),
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          systolic.toStringAsFixed(1),
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          status,
+                          style: TextStyle(fontSize: 16, color: statusColor),
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
