@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP8266 Heart Rate Monitor - WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #e53935;
+            text-align: center;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .connection-status {
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .connected {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .disconnected {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .connecting {
+            background-color: #fcf8e3;
+            color: #8a6d3b;
+        }
+        .controls {
+            display: flex;
+            margin-bottom: 20px;
+            gap: 10px;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .connect-btn {
+            background-color: #4caf50;
+            color: white;
+        }
+        .disconnect-btn {
+            background-color: #f44336;
+            color: white;
+        }
+        .command-btn {
+            background-color: #2196f3;
+            color: white;
+        }
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            font-family: monospace;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .log-received {
+            background-color: #e8f5e9;
+        }
+        .log-sent {
+            background-color: #e3f2fd;
+        }
+        .log-error {
+            background-color: #ffebee;
+        }
+        .log-info {
+            background-color: #fff8e1;
+        }
+        .readings {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            text-align: center;
+        }
+        .reading-box {
+            width: 150px;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .heart-rate {
+            background-color: #ffebee;
+            border: 2px solid #e57373;
+        }
+        .spo2 {
+            background-color: #e3f2fd;
+            border: 2px solid #64b5f6;
+        }
+        .beats {
+            background-color: #e8f5e9;
+            border: 2px solid #81c784;
+        }
+        .reading-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        .reading-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+        #chartContainer {
+            height: 200px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .heartbeat {
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <h1>ESP8266 Heart Rate Monitor</h1>
+    <div class="container">
+        <div id="connectionStatus" class="connection-status disconnected">
+            DISCONNECTED
+        </div>
+        <div class="controls">
+            <input type="text" id="ipAddress" placeholder="ESP8266 IP Address" value="192.168.1.">
+            <button id="connectBtn" class="connect-btn">Connect</button>
+            <button id="disconnectBtn" class="disconnect-btn" disabled>Disconnect</button>
+        </div>
+        <div class="controls">
+            <button id="startMeasurementBtn" class="command-btn" disabled>Start Measurement</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>Readings</h2>
+        <div class="readings">
+            <div class="reading-box heart-rate">
+                <div class="reading-label">HEART RATE</div>
+                <div id="heartRateValue" class="reading-value">--</div>
+                <div class="reading-label">BPM</div>
+            </div>
+            <div class="reading-box spo2">
+                <div class="reading-label">SpO2</div>
+                <div id="spo2Value" class="reading-value">--</div>
+                <div class="reading-label">%</div>
+            </div>
+            <div class="reading-box beats">
+                <div class="reading-label">BEATS DETECTED</div>
+                <div id="beatsValue" class="reading-value">0</div>
+                <div class="reading-label">BEATS</div>
+            </div>
+        </div>
+        <div id="chartContainer">
+            <canvas id="sensorChart"></canvas>
+        </div>
+        <div id="fingerStatus" style="text-align: center; margin-top: 10px; padding: 5px; border-radius: 5px; display: none;"></div>
+    </div>
+    
+    <div class="container">
+        <h2>WebSocket Log</h2>
+        <div id="logContainer" class="log-container"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <script>
+        // Elements
+        const ipAddressInput = document.getElementById('ipAddress');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const startMeasurementBtn = document.getElementById('startMeasurementBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const logContainer = document.getElementById('logContainer');
+        const heartRateValue = document.getElementById('heartRateValue');
+        const spo2Value = document.getElementById('spo2Value');
+        const beatsValue = document.getElementById('beatsValue');
+        const fingerStatus = document.getElementById('fingerStatus');
+        
+        // WebSocket connection
+        let socket = null;
+        let measurementActive = false;
+        let serverBusy = false;
+        
+        // Chart setup
+        const ctx = document.getElementById('sensorChart').getContext('2d');
+        const sensorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'IR Sensor',
+                    data: [],
+                    borderColor: 'rgb(229, 57, 53)',
+                    backgroundColor: 'rgba(229, 57, 53, 0.1)',
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        beginAtZero: false
+                    }
+                },
+                animation: {
+                    duration: 0
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+        
+        // Add log entry
+        function addLogEntry(message, type) {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Connect to WebSocket
+        function connect() {
+            const ipAddress = ipAddressInput.value.trim();
+            if (!ipAddress) {
+                addLogEntry('Please enter IP address', 'error');
+                return;
+            }
+            
+            // Update UI
+            connectionStatus.textContent = 'CONNECTING...';
+            connectionStatus.className = 'connection-status connecting';
+            connectBtn.disabled = true;
+            
+            // Create WebSocket connection
+            try {
+                const wsUrl = `ws://${ipAddress}:81`;
+                socket = new WebSocket(wsUrl);
+                
+                // Connection opened
+                socket.addEventListener('open', function(event) {
+                    connectionStatus.textContent = 'CONNECTED';
+                    connectionStatus.className = 'connection-status connected';
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    startMeasurementBtn.disabled = false;
+                    
+                    addLogEntry('Connected to WebSocket server', 'info');
+                });
+                
+                // Listen for messages
+                socket.addEventListener('message', function(event) {
+                    addLogEntry(`Received: ${event.data}`, 'received');
+                    
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        // Check if server is busy
+                        if (data.event === 'connected') {
+                            serverBusy = data.server_busy;
+                            if (data.server_busy) {
+                                startMeasurementBtn.disabled = true;
+                                addLogEntry('Server is busy with another measurement. Try again later.', 'error');
+                            } else {
+                                startMeasurementBtn.disabled = false;
+                            }
+                        } else if (data.event === 'error') {
+                            addLogEntry(`Server error: ${data.message}`, 'error');
+                            startMeasurementBtn.disabled = false;
+                        } else {
+                            // Update UI with received data
+                            updateReadings(data);
+                        }
+                    } catch (e) {
+                        addLogEntry(`Error parsing JSON: ${e}`, 'error');
+                    }
+                });
+                
+                // Listen for errors
+                socket.addEventListener('error', function(event) {
+                    addLogEntry('WebSocket error', 'error');
+                    disconnect();
+                });
+                
+                // Connection closed
+                socket.addEventListener('close', function(event) {
+                    addLogEntry('WebSocket connection closed', 'info');
+                    disconnect();
+                });
+                
+            } catch (error) {
+                addLogEntry(`Error: ${error.message}`, 'error');
+                disconnect();
+            }
+        }
+        
+        // Disconnect from WebSocket
+        function disconnect() {
+            if (socket) {
+                socket.close();
+                socket = null;
+            }
+            
+            // Update UI
+            connectionStatus.textContent = 'DISCONNECTED';
+            connectionStatus.className = 'connection-status disconnected';
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            startMeasurementBtn.disabled = true;
+            measurementActive = false;
+            serverBusy = false;
+        }
+        
+        // Start measurement
+        function startMeasurement() {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                addLogEntry('Not connected to WebSocket server', 'error');
+                return;
+            }
+            
+            const command = {
+                command: 'start_measurement'
+            };
+            
+            socket.send(JSON.stringify(command));
+            addLogEntry(`Sent: ${JSON.stringify(command)}`, 'sent');
+            startMeasurementBtn.disabled = true;
+            measurementActive = true;
+        }
+        
+        // Clear measurement results
+        function clearResults() {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                addLogEntry('Not connected to WebSocket server', 'error');
+                return;
+            }
+            
+            // Send HTTP request to clear results
+            const ipAddress = ipAddressInput.value.trim();
+            if (!ipAddress) {
+                addLogEntry('IP address is missing', 'error');
+                return;
+            }
+            
+            // Make a fetch request to clear results
+            fetch(`http://${ipAddress}/clear_results`)
+                .then(response => {
+                    if (response.ok) {
+                        addLogEntry('Measurement results cleared successfully', 'info');
+                        return response.json();
+                    }
+                    throw new Error('Failed to clear results');
+                })
+                .then(data => {
+                    addLogEntry(`Server response: ${JSON.stringify(data)}`, 'info');
+                })
+                .catch(error => {
+                    addLogEntry(`Error clearing results: ${error.message}`, 'error');
+                });
+        }
+        
+        // Update readings based on received data
+        function updateReadings(data) {
+            // Handle different event types
+            const eventType = data.event || '';
+            
+            // Update server busy state and measurement active state
+            if (data.server_busy !== undefined) {
+                serverBusy = data.server_busy;
+                startMeasurementBtn.disabled = serverBusy || measurementActive;
+            }
+            
+            if (data.measurement_active !== undefined) {
+                measurementActive = data.measurement_active;
+                if (!measurementActive && !serverBusy) {
+                    startMeasurementBtn.disabled = false;
+                }
+            }
+            
+            // Check for finger presence
+            if (data.finger_present !== undefined) {
+                if (!data.finger_present && measurementActive) {
+                    fingerStatus.style.display = 'block';
+                    fingerStatus.textContent = 'Please place your finger on the sensor';
+                    fingerStatus.style.backgroundColor = '#ffebee';
+                    fingerStatus.style.color = '#c62828';
+                } else if (data.finger_present) {
+                    fingerStatus.style.display = 'block';
+                    fingerStatus.textContent = 'Finger detected';
+                    fingerStatus.style.backgroundColor = '#e8f5e9';
+                    fingerStatus.style.color = '#2e7d32';
+                } else {
+                    fingerStatus.style.display = 'none';
+                }
+            }
+            
+            if (eventType === 'beat_detected') {
+                // Animate heart rate on beat detection
+                heartRateValue.classList.add('heartbeat');
+                setTimeout(() => {
+                    heartRateValue.classList.remove('heartbeat');
+                }, 1000);
+                
+                // Update beat count
+                if (data.beat_count) {
+                    beatsValue.textContent = data.beat_count;
+                }
+                
+                // Update heart rate
+                if (data.current_bpm) {
+                    heartRateValue.textContent = data.current_bpm;
+                }
+            }
+            else if (eventType === 'sensor_data') {
+                // Update heart rate
+                if (data.heart_rate) {
+                    heartRateValue.textContent = data.heart_rate;
+                }
+                
+                // Update SpO2
+                if (data.spo2) {
+                    spo2Value.textContent = data.spo2;
+                }
+                
+                // Update beat count
+                if (data.beats_detected !== undefined) {
+                    beatsValue.textContent = data.beats_detected;
+                }
+                
+                // Update chart with sensor data
+                if (data.ir_value) {
+                    // Normalize the value for better visualization
+                    const normalizedValue = data.ir_value / 10000;
+                    
+                    // Update chart
+                    if (sensorChart.data.labels.length > 50) {
+                        sensorChart.data.labels.shift();
+                        sensorChart.data.datasets[0].data.shift();
+                    }
+                    
+                    sensorChart.data.labels.push('');
+                    sensorChart.data.datasets[0].data.push(normalizedValue);
+                    sensorChart.update();
+                }
+            }
+            else if (eventType === 'measurement_complete') {
+                // Handle measurement completion
+                measurementActive = false;
+                serverBusy = false;
+                startMeasurementBtn.disabled = false;
+                
+                if (data.final_heart_rate) {
+                    heartRateValue.textContent = data.final_heart_rate;
+                }
+                
+                addLogEntry(`Measurement complete! Heart Rate: ${data.final_heart_rate} BPM`, 'info');
+                
+                // Clear the results to prevent duplicates
+                clearResults();
+            }
+            else if (eventType === 'measurement_started') {
+                // Handle measurement start event
+                measurementActive = true;
+                serverBusy = true;
+                startMeasurementBtn.disabled = true;
+                addLogEntry('Measurement started', 'info');
+            }
+        }
+        
+        // Event listeners
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
+        startMeasurementBtn.addEventListener('click', startMeasurement);
+        
+        // Initialize
+        addLogEntry('WebSocket test page loaded', 'info');
+    </script>
+</body>
+</html>

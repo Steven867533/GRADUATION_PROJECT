@@ -3,12 +3,14 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import '../main.dart';
 
 class AuthProvider with ChangeNotifier {
-  static const String _baseUrl = 'http://10.0.2.2:5000'; // Base URL for API
+  static const String _baseUrl = AppConfig.baseUrl; // Base URL for API
   static const String _authUrl = '$_baseUrl/auth'; // URL for auth endpoints
   static const String _tokenKey = 'token';
-  static const String _espIpKey = 'http://10.0.2.2:5001'; // Key for ESP IP
+  static String _espIpKey =
+      'esp_ip'; // Changed from const and using a string literal
 
   String? _token;
   String? _userId;
@@ -23,6 +25,15 @@ class AuthProvider with ChangeNotifier {
   String? get role => _role;
   Map<String, dynamic>? get userProfile => _userProfile;
   String? get espIp => _espIp;
+
+  // New getter that safely returns the user role for debugging
+  String get userRole {
+    if (_role != null) return _role!;
+    if (_userProfile != null && _userProfile!['role'] != null) {
+      return _userProfile!['role']!;
+    }
+    return 'unknown';
+  }
 
   AuthProvider() {
     _loadToken();
@@ -108,6 +119,18 @@ class AuthProvider with ChangeNotifier {
 
       if (response.statusCode == 200) {
         _userProfile = json.decode(response.body);
+
+        // Extract relationship phone numbers if available
+        if (_userProfile != null) {
+          if (_userProfile!['role'] == 'Patient') {
+            // For patient, get doctor and companion phone numbers
+            await _getRelationshipPhoneNumbers();
+          } else if (_userProfile!['role'] == 'Companion') {
+            // For companion, get patient phone number
+            await _getPatientPhoneNumber();
+          }
+        }
+
         notifyListeners();
       } else {
         final data = json.decode(response.body);
@@ -119,6 +142,63 @@ class AuthProvider with ChangeNotifier {
       debugPrint('Network error fetching user profile: $e');
       _userProfile = null;
       notifyListeners();
+    }
+  }
+
+  // Get phone numbers for patient's doctor and companion
+  Future<void> _getRelationshipPhoneNumbers() async {
+    try {
+      if (_userProfile == null || _token == null) return;
+
+      // Get doctor phone number if doctorId exists
+      if (_userProfile!['doctorId'] != null) {
+        final doctorResponse = await http.get(
+          Uri.parse('$_baseUrl/users/${_userProfile!['doctorId']}'),
+          headers: {'Authorization': 'Bearer $_token'},
+        );
+
+        if (doctorResponse.statusCode == 200) {
+          final doctorData = json.decode(doctorResponse.body);
+          _userProfile!['doctorPhoneNumber'] = doctorData['phoneNumber'];
+        }
+      }
+
+      // Get companion phone number if companionId exists
+      if (_userProfile!['companionId'] != null) {
+        final companionResponse = await http.get(
+          Uri.parse('$_baseUrl/users/${_userProfile!['companionId']}'),
+          headers: {'Authorization': 'Bearer $_token'},
+        );
+
+        if (companionResponse.statusCode == 200) {
+          final companionData = json.decode(companionResponse.body);
+          _userProfile!['companionPhoneNumber'] = companionData['phoneNumber'];
+        }
+      }
+    } catch (e) {
+      debugPrint('Error getting relationship phone numbers: $e');
+    }
+  }
+
+  // Get phone number for companion's patient
+  Future<void> _getPatientPhoneNumber() async {
+    try {
+      if (_userProfile == null || _token == null) return;
+
+      // Get patient phone number if patientId exists
+      if (_userProfile!['patientId'] != null) {
+        final patientResponse = await http.get(
+          Uri.parse('$_baseUrl/users/${_userProfile!['patientId']}'),
+          headers: {'Authorization': 'Bearer $_token'},
+        );
+
+        if (patientResponse.statusCode == 200) {
+          final patientData = json.decode(patientResponse.body);
+          _userProfile!['patientPhoneNumber'] = patientData['phoneNumber'];
+        }
+      }
+    } catch (e) {
+      debugPrint('Error getting patient phone number: $e');
     }
   }
 
@@ -195,28 +275,73 @@ class AuthProvider with ChangeNotifier {
     String? bloodPressureType,
     String? patientPhoneNumber,
     String? companionPhoneNumber,
+    String? doctorPhoneNumber,
   }) async {
     try {
+      final payload = {
+        'name': name,
+        'email': email.trim(),
+        'password': password,
+        'phoneNumber': phoneNumber.trim(),
+        'birthdate': birthdate,
+        'role': role,
+      };
+
+      // Add optional fields based on role
+      if (role == 'Patient') {
+        if (bloodPressureType != null) {
+          payload['bloodPressureType'] = bloodPressureType;
+        }
+        if (companionPhoneNumber != null && companionPhoneNumber.isNotEmpty) {
+          payload['companionPhoneNumber'] = companionPhoneNumber.trim();
+        }
+        if (doctorPhoneNumber != null && doctorPhoneNumber.isNotEmpty) {
+          payload['doctorPhoneNumber'] = doctorPhoneNumber.trim();
+        }
+      } else if (role == 'Companion') {
+        if (patientPhoneNumber != null && patientPhoneNumber.isNotEmpty) {
+          payload['patientPhoneNumber'] = patientPhoneNumber.trim();
+        }
+      }
+
       final response = await http.post(
         Uri.parse('$_authUrl/signup'),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'name': name,
-          'email': email.trim(),
-          'password': password,
-          'phoneNumber': phoneNumber.trim(),
-          'birthdate': birthdate,
-          'role': role,
-          if (bloodPressureType != null) 
-            'bloodPressureType': bloodPressureType,
-          if (patientPhoneNumber != null)
-            'patientPhoneNumber': patientPhoneNumber.trim(),
-          if (companionPhoneNumber != null)
-            'companionPhoneNumber': companionPhoneNumber.trim(),
-        }),
+        body: json.encode(payload),
       );
 
-      return await _handleAuthResponse(response);
+      final result = await _handleAuthResponse(response);
+
+      // If signup was successful and we have relationship data, update the relationships
+      if (result['success'] && _token != null) {
+        // We're already logged in, so we can update relationships if needed
+        final updateData = <String, dynamic>{};
+
+        if (role == 'Patient') {
+          if (companionPhoneNumber != null && companionPhoneNumber.isNotEmpty) {
+            updateData['companionPhoneNumber'] = companionPhoneNumber.trim();
+          }
+          if (doctorPhoneNumber != null && doctorPhoneNumber.isNotEmpty) {
+            updateData['doctorPhoneNumber'] = doctorPhoneNumber.trim();
+          }
+        } else if (role == 'Companion') {
+          if (patientPhoneNumber != null && patientPhoneNumber.isNotEmpty) {
+            updateData['patientPhoneNumber'] = patientPhoneNumber.trim();
+          }
+        }
+
+        // If we have relationship data to update, make the update request
+        if (updateData.isNotEmpty) {
+          try {
+            await updateProfile(updateData);
+          } catch (e) {
+            debugPrint('Error updating relationships after signup: $e');
+            // We don't want to fail the signup if relationship update fails
+          }
+        }
+      }
+
+      return result;
     } catch (e) {
       debugPrint('Error during signup: $e');
       return {
@@ -244,6 +369,43 @@ class AuthProvider with ChangeNotifier {
       return await _handleAuthResponse(response);
     } catch (e) {
       debugPrint('Error during login: $e');
+      return {
+        'success': false,
+        'message': 'Network error occurred. Please try again.'
+      };
+    }
+  }
+
+  // Update user profile
+  Future<Map<String, dynamic>> updateProfile(
+      Map<String, dynamic> updateData) async {
+    if (_token == null || _userId == null) {
+      return {'success': false, 'message': 'Not authenticated'};
+    }
+
+    try {
+      final response = await http.put(
+        Uri.parse('$_baseUrl/users/$_userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token'
+        },
+        body: json.encode(updateData),
+      );
+
+      if (response.statusCode == 200) {
+        // Refresh user profile after update
+        await fetchUserProfile();
+        return {'success': true};
+      } else {
+        final data = json.decode(response.body);
+        return {
+          'success': false,
+          'message': data['message'] ?? 'Failed to update profile'
+        };
+      }
+    } catch (e) {
+      debugPrint('Error updating profile: $e');
       return {
         'success': false,
         'message': 'Network error occurred. Please try again.'

@@ -1,0 +1,35 @@
+name: HCE
+description: Heath Companion for Elderly.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_animate: ^4.5.0
+  http: ^1.2.2
+  image_picker: ^1.1.2
+  fl_chart: ^0.69.0
+  webview_flutter: ^4.9.0
+  webview_flutter_android: ^4.3.4
+  webview_flutter_wkwebview: ^3.14.4
+  provider: ^6.1.2
+  shared_preferences: ^2.3.2
+  connectivity_plus: ^6.0.5
+  intl: ^0.19.0
+  another_flushbar: ^1.10.29
+  jwt_decoder: ^2.0.1
+  geolocator: ^12.0.0
+  web_socket_channel: ^2.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

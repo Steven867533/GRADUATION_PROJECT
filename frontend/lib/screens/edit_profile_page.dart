@@ -17,10 +17,15 @@ class EditProfilePageState extends State<EditProfilePage> {
   late TextEditingController _emailController;
   late TextEditingController _phoneController;
   late TextEditingController _birthdateController;
+  late TextEditingController _companionPhoneController;
+  late TextEditingController _patientPhoneController;
+  late TextEditingController _doctorPhoneController;
   DateTime? _selectedDate;
   bool _isLoading = false;
   String? _errorMessage;
+  String? _successMessage;
   Map<String, dynamic>? userData;
+  String? _userRole;
 
   @override
   void initState() {
@@ -30,6 +35,9 @@ class EditProfilePageState extends State<EditProfilePage> {
     _emailController = TextEditingController();
     _phoneController = TextEditingController();
     _birthdateController = TextEditingController();
+    _companionPhoneController = TextEditingController();
+    _patientPhoneController = TextEditingController();
+    _doctorPhoneController = TextEditingController();
   }
 
   @override
@@ -45,6 +53,16 @@ class EditProfilePageState extends State<EditProfilePage> {
       _nameController.text = userData?['name'] ?? '';
       _emailController.text = userData?['email'] ?? '';
       _phoneController.text = userData?['phoneNumber'] ?? '';
+      _userRole = userData?['role'];
+
+      // Initialize companion/patient/doctor phone numbers if available
+      if (_userRole == 'Companion') {
+        _patientPhoneController.text = userData?['patientPhoneNumber'] ?? '';
+      } else if (_userRole == 'Patient') {
+        _companionPhoneController.text =
+            userData?['companionPhoneNumber'] ?? '';
+        _doctorPhoneController.text = userData?['doctorPhoneNumber'] ?? '';
+      }
 
       // Format birthdate if available
       if (userData?['birthdate'] != null) {
@@ -65,6 +83,9 @@ class EditProfilePageState extends State<EditProfilePage> {
     _emailController.dispose();
     _phoneController.dispose();
     _birthdateController.dispose();
+    _companionPhoneController.dispose();
+    _patientPhoneController.dispose();
+    _doctorPhoneController.dispose();
     super.dispose();
   }
 
@@ -83,6 +104,18 @@ class EditProfilePageState extends State<EditProfilePage> {
     }
   }
 
+  // Validate phone number format
+  String? _validatePhoneNumber(String? value) {
+    if (value == null || value.isEmpty) {
+      return null; // Optional field
+    }
+    // Basic validation for international format (should start with +)
+    if (!value.startsWith('+')) {
+      return 'Phone number should start with + (e.g., +20123456789)';
+    }
+    return null;
+  }
+
   Future<void> _updateProfile() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -91,6 +124,7 @@ class EditProfilePageState extends State<EditProfilePage> {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _successMessage = null;
     });
 
     try {
@@ -109,20 +143,50 @@ class EditProfilePageState extends State<EditProfilePage> {
           'birthdate': _selectedDate!.toIso8601String(),
       };
 
-      await ApiService().updateUserProfile(token, updatedData);
+      // Add relationship phone numbers based on user role
+      if (_userRole == 'Companion' && _patientPhoneController.text.isNotEmpty) {
+        updatedData['patientPhoneNumber'] = _patientPhoneController.text;
+      } else if (_userRole == 'Patient') {
+        if (_companionPhoneController.text.isNotEmpty) {
+          updatedData['companionPhoneNumber'] = _companionPhoneController.text;
+        }
+        if (_doctorPhoneController.text.isNotEmpty) {
+          updatedData['doctorPhoneNumber'] = _doctorPhoneController.text;
+        }
+      }
 
+      final userId = authProvider.userId;
+      // Use the API service to update the user profile directly
+      final updatedUser =
+          await ApiService().updateUserProfile(token, updatedData);
+
+      // After successful update, refresh the user profile in AuthProvider
+      await authProvider.fetchUserProfile();
+
+      setState(() {
+        _successMessage = 'Profile updated successfully!';
+        // Update the local userData to reflect the changes
+        userData = updatedUser;
+      });
+
+      // Show success message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile updated successfully')),
+          SnackBar(
+            content: Text(_successMessage!),
+            backgroundColor: Colors.green,
+          ),
         );
-        Navigator.pop(context);
       }
     } catch (e) {
       setState(() {
         _errorMessage = e.toString();
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating profile: $_errorMessage')),
+        SnackBar(
+          content: Text('Error updating profile: $_errorMessage'),
+          backgroundColor: Colors.red,
+        ),
       );
     } finally {
       setState(() {
@@ -149,6 +213,24 @@ class EditProfilePageState extends State<EditProfilePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (_successMessage != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green),
+                  ),
+                  child: Text(
+                    _successMessage!,
+                    style:
+                        TextStyle(color: Colors.green.shade800, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
               // Name field
               TextFormField(
                 controller: _nameController,
@@ -193,12 +275,13 @@ class EditProfilePageState extends State<EditProfilePage> {
                   labelText: 'Phone Number',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.phone),
+                  helperText: 'International format (e.g., +20123456789)',
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter your phone number';
                   }
-                  return null;
+                  return _validatePhoneNumber(value);
                 },
               ),
               const SizedBox(height: 16),
@@ -223,7 +306,50 @@ class EditProfilePageState extends State<EditProfilePage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+
+              // Companion/Patient/Doctor Phone Number fields based on role
+              if (_userRole == 'Companion') ...[
+                TextFormField(
+                  controller: _patientPhoneController,
+                  decoration: const InputDecoration(
+                    labelText: 'Patient Phone Number',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.person_search),
+                    helperText:
+                        'Phone number of the patient you are monitoring (e.g., +20123456789)',
+                  ),
+                  validator: _validatePhoneNumber,
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              if (_userRole == 'Patient') ...[
+                TextFormField(
+                  controller: _companionPhoneController,
+                  decoration: const InputDecoration(
+                    labelText: 'Companion Phone Number',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.person_add),
+                    helperText:
+                        'Phone number of your companion/caregiver (e.g., +20123456789)',
+                  ),
+                  validator: _validatePhoneNumber,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _doctorPhoneController,
+                  decoration: const InputDecoration(
+                    labelText: 'Doctor Phone Number',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.medical_services),
+                    helperText:
+                        'Phone number of your doctor (e.g., +20123456789)',
+                  ),
+                  validator: _validatePhoneNumber,
+                ),
+                const SizedBox(height: 16),
+              ],
 
               // Submit button
               ElevatedButton(
@@ -241,10 +367,18 @@ class EditProfilePageState extends State<EditProfilePage> {
 
               if (_errorMessage != null) ...[
                 const SizedBox(height: 16),
-                Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.red, fontSize: 14),
-                  textAlign: TextAlign.center,
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red),
+                  ),
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(color: Colors.red.shade800, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ],
             ],

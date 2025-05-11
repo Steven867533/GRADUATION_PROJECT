@@ -18,7 +18,9 @@ class SignUpPageState extends State<SignUpPage> {
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController birthdateController = TextEditingController();
   final TextEditingController patientPhoneController = TextEditingController();
-  final TextEditingController companionPhoneController = TextEditingController();
+  final TextEditingController companionPhoneController =
+      TextEditingController();
+  final TextEditingController doctorPhoneController = TextEditingController();
 
   // State variables
   String _selectedRole = 'Companion';
@@ -28,9 +30,64 @@ class SignUpPageState extends State<SignUpPage> {
   // Constants
   static const Color whiteBackground = Color.fromRGBO(255, 255, 255, 0.9);
 
+  // Validate phone number format
+  String? _validatePhoneNumber(String? value) {
+    if (value == null || value.isEmpty) {
+      return null; // Optional field for relationships
+    }
+    // Basic validation for international format (should start with +)
+    if (!value.startsWith('+')) {
+      return 'Phone number should start with + (e.g., +20123456789)';
+    }
+    return null;
+  }
+
   // Sign up function
   Future<void> _signUp() async {
     if (_isLoading) return;
+
+    // Validate required fields
+    if (nameController.text.isEmpty ||
+        emailController.text.isEmpty ||
+        passwordController.text.isEmpty ||
+        phoneController.text.isEmpty ||
+        birthdateController.text.isEmpty ||
+        (_selectedRole == 'Patient' && _bloodPressureType == null)) {
+      _showErrorMessage('Please fill in all required fields');
+      return;
+    }
+
+    // Validate phone number format
+    if (!phoneController.text.startsWith('+')) {
+      _showErrorMessage(
+          'Phone number should start with + (e.g., +20123456789)');
+      return;
+    }
+
+    // Validate relationship phone numbers if provided
+    if (_selectedRole == 'Companion' &&
+        patientPhoneController.text.isNotEmpty &&
+        !patientPhoneController.text.startsWith('+')) {
+      _showErrorMessage(
+          'Patient phone number should start with + (e.g., +20123456789)');
+      return;
+    }
+
+    if (_selectedRole == 'Patient') {
+      if (companionPhoneController.text.isNotEmpty &&
+          !companionPhoneController.text.startsWith('+')) {
+        _showErrorMessage(
+            'Companion phone number should start with + (e.g., +20123456789)');
+        return;
+      }
+
+      if (doctorPhoneController.text.isNotEmpty &&
+          !doctorPhoneController.text.startsWith('+')) {
+        _showErrorMessage(
+            'Doctor phone number should start with + (e.g., +20123456789)');
+        return;
+      }
+    }
 
     setState(() {
       _isLoading = true;
@@ -45,8 +102,12 @@ class SignUpPageState extends State<SignUpPage> {
       birthdate: birthdateController.text,
       role: _selectedRole,
       bloodPressureType: _selectedRole == 'Patient' ? _bloodPressureType : null,
-      patientPhoneNumber: _selectedRole == 'Companion' ? patientPhoneController.text : null,
-      companionPhoneNumber: _selectedRole == 'Patient' ? companionPhoneController.text : null,
+      patientPhoneNumber:
+          _selectedRole == 'Companion' ? patientPhoneController.text : null,
+      companionPhoneNumber:
+          _selectedRole == 'Patient' ? companionPhoneController.text : null,
+      doctorPhoneNumber:
+          _selectedRole == 'Patient' ? doctorPhoneController.text : null,
     );
 
     setState(() {
@@ -63,24 +124,29 @@ class SignUpPageState extends State<SignUpPage> {
       );
       Navigator.pushReplacementNamed(context, '/login');
     } else {
-      // Show error message at the top using Flushbar
-      Flushbar(
-        message: result['message'] ?? 'Signup failed. Please try again.',
-        messageSize: 18, // Larger font for elderly users
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 5), // Hides after 5 seconds
-        flushbarPosition: FlushbarPosition.TOP, // Display at the top
-        margin: const EdgeInsets.all(8),
-        borderRadius: BorderRadius.circular(8),
-        icon: const Icon(
-          Icons.error_outline,
-          size: 28,
-          color: Colors.white,
-        ),
-        leftBarIndicatorColor: Colors.white,
-        dismissDirection: FlushbarDismissDirection.HORIZONTAL, // Swipe to dismiss
-      ).show(context);
+      _showErrorMessage(
+          result['message'] ?? 'Signup failed. Please try again.');
     }
+  }
+
+  void _showErrorMessage(String message) {
+    // Show error message at the top using Flushbar
+    Flushbar(
+      message: message,
+      messageSize: 18, // Larger font for elderly users
+      backgroundColor: Colors.red,
+      duration: const Duration(seconds: 5), // Hides after 5 seconds
+      flushbarPosition: FlushbarPosition.TOP, // Display at the top
+      margin: const EdgeInsets.all(8),
+      borderRadius: BorderRadius.circular(8),
+      icon: const Icon(
+        Icons.error_outline,
+        size: 28,
+        color: Colors.white,
+      ),
+      leftBarIndicatorColor: Colors.white,
+      dismissDirection: FlushbarDismissDirection.HORIZONTAL, // Swipe to dismiss
+    ).show(context);
   }
 
   @override
@@ -92,6 +158,7 @@ class SignUpPageState extends State<SignUpPage> {
     birthdateController.dispose();
     patientPhoneController.dispose();
     companionPhoneController.dispose();
+    doctorPhoneController.dispose();
     super.dispose();
   }
 
@@ -187,7 +254,8 @@ class SignUpPageState extends State<SignUpPage> {
                     fillColor: whiteBackground,
                     hintText: 'Full Name',
                     hintStyle: TextStyle(fontSize: 18),
-                    prefixIcon: Icon(Icons.person, color: Colors.blue, size: 28),
+                    prefixIcon:
+                        Icon(Icons.person, color: Colors.blue, size: 28),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.all(Radius.circular(30)),
                       borderSide: BorderSide.none,
@@ -241,7 +309,7 @@ class SignUpPageState extends State<SignUpPage> {
                   decoration: const InputDecoration(
                     filled: true,
                     fillColor: whiteBackground,
-                    hintText: 'Phone Number',
+                    hintText: 'Phone Number (e.g., +20123456789)',
                     hintStyle: TextStyle(fontSize: 18),
                     prefixIcon: Icon(Icons.phone, color: Colors.blue, size: 28),
                     border: OutlineInputBorder(
@@ -262,7 +330,8 @@ class SignUpPageState extends State<SignUpPage> {
                     fillColor: whiteBackground,
                     hintText: 'Birthdate (YYYY-MM-DD)',
                     hintStyle: TextStyle(fontSize: 18),
-                    prefixIcon: Icon(Icons.calendar_today, color: Colors.blue, size: 28),
+                    prefixIcon: Icon(Icons.calendar_today,
+                        color: Colors.blue, size: 28),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.all(Radius.circular(30)),
                       borderSide: BorderSide.none,
@@ -280,9 +349,10 @@ class SignUpPageState extends State<SignUpPage> {
                     decoration: const InputDecoration(
                       filled: true,
                       fillColor: whiteBackground,
-                      hintText: 'Patient Phone Number (e.g., +1234567890)',
+                      hintText: 'Patient Phone Number (e.g., +20123456789)',
                       hintStyle: TextStyle(fontSize: 18),
-                      prefixIcon: Icon(Icons.person_search, color: Colors.blue, size: 28),
+                      prefixIcon: Icon(Icons.person_search,
+                          color: Colors.blue, size: 28),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.all(Radius.circular(30)),
                         borderSide: BorderSide.none,
@@ -293,6 +363,27 @@ class SignUpPageState extends State<SignUpPage> {
                   ),
                 if (_selectedRole == 'Companion') const SizedBox(height: 20),
 
+                // Doctor Phone Number Field (for Patient only)
+                if (_selectedRole == 'Patient')
+                  TextField(
+                    controller: doctorPhoneController,
+                    decoration: const InputDecoration(
+                      filled: true,
+                      fillColor: whiteBackground,
+                      hintText: 'Doctor Phone Number (e.g., +20123456789)',
+                      hintStyle: TextStyle(fontSize: 18),
+                      prefixIcon: Icon(Icons.medical_services,
+                          color: Colors.blue, size: 28),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(30)),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                if (_selectedRole == 'Patient') const SizedBox(height: 20),
+
                 // Companion Phone Number Field (for Patient only)
                 if (_selectedRole == 'Patient')
                   TextField(
@@ -300,9 +391,10 @@ class SignUpPageState extends State<SignUpPage> {
                     decoration: const InputDecoration(
                       filled: true,
                       fillColor: whiteBackground,
-                      hintText: 'Companion Phone Number (e.g., +1234567890)',
+                      hintText: 'Companion Phone Number (e.g., +20123456789)',
                       hintStyle: TextStyle(fontSize: 18),
-                      prefixIcon: Icon(Icons.person_add, color: Colors.blue, size: 28),
+                      prefixIcon:
+                          Icon(Icons.person_add, color: Colors.blue, size: 28),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.all(Radius.circular(30)),
                         borderSide: BorderSide.none,
@@ -321,7 +413,8 @@ class SignUpPageState extends State<SignUpPage> {
                       fillColor: whiteBackground,
                       hintText: 'Blood Pressure Type',
                       hintStyle: TextStyle(fontSize: 18),
-                      prefixIcon: Icon(Icons.favorite, color: Colors.blue, size: 28),
+                      prefixIcon:
+                          Icon(Icons.favorite, color: Colors.blue, size: 28),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.all(Radius.circular(30)),
                         borderSide: BorderSide.none,
@@ -335,7 +428,8 @@ class SignUpPageState extends State<SignUpPage> {
                     items: ['High', 'Average', 'Low']
                         .map((type) => DropdownMenuItem(
                               value: type,
-                              child: Text(type, style: const TextStyle(fontSize: 18)),
+                              child: Text(type,
+                                  style: const TextStyle(fontSize: 18)),
                             ))
                         .toList(),
                     onChanged: (value) {
@@ -371,7 +465,8 @@ class SignUpPageState extends State<SignUpPage> {
                             backgroundColor: Colors.transparent,
                             foregroundColor: Colors.white,
                             shadowColor: Colors.transparent,
-                            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 50, vertical: 15),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(30),
                             ),
